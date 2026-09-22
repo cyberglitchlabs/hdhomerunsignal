@@ -1,12 +1,13 @@
 # HDHomeRun Signal Monitor
 
-A modern web application that replaces the discontinued HDHomeRun Signal Android app. This web app provides real-time signal monitoring, channel tuning, and device management for HDHomeRun devices in both the United States and United Kingdom/EU markets.
+A modern web application that replaces the discontinued HDHomeRun Signal Android app. This web app provides real-time signal monitoring, channel tuning, and device management for HDHomeRun devices in the United States, Canada, United Kingdom/EU and Australia.
 
 ## Features
 
 - **Multi-Region Support**: Supports US/Canada (ATSC), UK/EU (DVB-T/T2) and Australia (DVB-T) broadcast standards with region-specific channel maps
 - **Device Discovery**: Automatically finds HDHomeRun devices on your network
 - **Real-time Signal Monitoring**: Live updates of signal strength, SNR quality, and symbol quality with dBm/dB estimates
+- **Session Markers**: Each signal meter (strength, SNR, symbol quality) shows three reference points for the current channel: the live reading, a faded high-water mark showing the best reading so far, and a ▲ caret marking the starting reading from when the channel first locked. Hover over a meter to see Now / Start / Peak values.
 - **Antenna Tuning Mode**: Monitor all tuners simultaneously with real-time graphs for optimal antenna positioning
 - **Direct Channel Tuning**: Quickly tune to specific channels with channel up/down controls
 - **Multi-tuner Support**: Switch between tuners on devices that support multiple tuners
@@ -30,6 +31,7 @@ The original Android app functionality has been recreated and enhanced with:
 - Region selection (US / Canada / UK-EU / Australia) with appropriate broadcast standards
 - Device selection dropdown
 - Real-time signal strength, SNR quality, and symbol quality meters with dB conversion
+- Session markers on each meter showing start point, peak (high-water mark) and current reading
 - **Antenna tuning mode** - simultaneous monitoring of all tuners with real-time graphing (new!)
 - Direct channel tuning with up/down controls
 - Channel map selection (region-specific: US/CA broadcast/cable/HRC/IRC, UK-EU broadcast/cable or AU broadcast/cable)
@@ -89,7 +91,12 @@ OR
    - Enter a channel number and press the tune button or hit Enter
    - Use the Previous/Next buttons to step through channels
    - The app automatically detects channels tuned by other applications (e.g., tvheadend)
-4. **Monitor Signal**: View real-time signal strength (dBm), SNR (dB), and symbol quality
+4. **Monitor Signal**: View real-time signal strength (dBm), SNR (dB), and symbol quality. Each meter also shows:
+   - **Current**: the solid, color-coded bar
+   - **High-water mark**: a faded bar behind it showing the peak reading since you tuned the channel
+   - **Starting point**: a ▲ caret under the bar marking the first reading after the channel locked
+
+   Hover over a meter for exact Now / Start / Peak percentages. The markers reset when you change channel, tuner or device, but stay in place through a brief loss of lock, so swinging the antenna won't wipe them. This makes it easy to tell whether an adjustment helped.
 5. **View Programs**: See detected programs/PIDs and ATSC 3.0 technical details when available
 6. **Watch Live TV**: Each detected program has a **Watch** button that downloads an M3U playlist file, which opens in your default media player (VLC, mpv, etc.) to stream live TV. Right-click the Watch button to **Copy Stream URL** to your clipboard for use in any application.
 7. **Channel Map**: Select the appropriate channel map (US Broadcast is default)
