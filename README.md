@@ -4,7 +4,7 @@ A modern web application that replaces the discontinued HDHomeRun Signal Android
 
 ## Features
 
-- **Multi-Region Support**: Supports both US (ATSC) and UK/EU (DVB-T/T2) broadcast standards with region-specific channel maps
+- **Multi-Region Support**: Supports US/Canada (ATSC), UK/EU (DVB-T/T2) and Australia (DVB-T) broadcast standards with region-specific channel maps
 - **Device Discovery**: Automatically finds HDHomeRun devices on your network
 - **Real-time Signal Monitoring**: Live updates of signal strength, SNR quality, and symbol quality with dBm/dB estimates
 - **Antenna Tuning Mode**: Monitor all tuners simultaneously with real-time graphs for optimal antenna positioning
@@ -26,12 +26,12 @@ Antenna Mode
 
 
 The original Android app functionality has been recreated and enhanced with:
-- Region selection (US / UK-EU) with appropriate broadcast standards
+- Region selection (US / Canada / UK-EU / Australia) with appropriate broadcast standards
 - Device selection dropdown
 - Real-time signal strength, SNR quality, and symbol quality meters with dB conversion
 - **Antenna tuning mode** - simultaneous monitoring of all tuners with real-time graphing (new!)
 - Direct channel tuning with up/down controls
-- Channel map selection (region-specific: US broadcast/cable/HRC/IRC or UK-EU broadcast/cable)
+- Channel map selection (region-specific: US/CA broadcast/cable/HRC/IRC, UK-EU broadcast/cable or AU broadcast/cable)
 - Data rate monitoring
 - Program/PID listing for tuned channels with Watch buttons
 - Watch live TV directly from the app using M3U stream URLs
@@ -148,13 +148,15 @@ services:
 ```
 
 ### Region Selection
-Select your region (United States or United Kingdom/EU) to configure the app for your broadcast standard:
+Select your region (United States, Canada, United Kingdom/EU or Australia) to configure the app for your broadcast standard:
 - **United States**: ATSC 1.0/3.0 broadcasts, channels 2-36
 - **United Kingdom / EU**: DVB-T/T2 broadcasts, channels 5-60
+- **Australia**: DVB-T broadcasts, VHF channels 6-12 (including 9A) and UHF channels 28-51
 
 **Important**: You must have a region-appropriate HDHomeRun device:
 - US models work with ATSC broadcasts
 - EU models (HDHomeRun Connect Duo EU, etc.) work with DVB-T/T2 broadcasts
+- Australian broadcasts need a DVB-T model (the EU/AU hardware)
 
 ### Channel Maps
 
@@ -167,6 +169,10 @@ Select your region (United States or United Kingdom/EU) to configure the app for
 **United Kingdom / EU:**
 - **UK/EU Broadcast**: Standard DVB-T/T2 over-the-air channels
 - **UK/EU Cable**: Cable TV channels
+
+**Australia:**
+- **AU Broadcast**: Standard DVB-T over-the-air channels
+- **AU Cable**: Cable TV channels
 
 ### Signal Quality Interpretation
 - **Signal Strength**: Raw power level (aim for 80%+)

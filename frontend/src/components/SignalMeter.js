@@ -64,7 +64,8 @@ import AntennaMode from './AntennaMode';
 const REGIONS = [
   { value: 'us', label: 'United States' },
   { value: 'ca', label: 'Canada' },
-  { value: 'eu', label: 'United Kingdom / EU' }
+  { value: 'eu', label: 'United Kingdom / EU' },
+  { value: 'au', label: 'Australia' }
 ];
 
 const CHANNEL_MAPS = {
@@ -83,7 +84,18 @@ const CHANNEL_MAPS = {
   eu: [
     { value: 'eu-bcast', label: 'UK/EU Broadcast' },
     { value: 'eu-cable', label: 'UK/EU Cable' }
+  ],
+  au: [
+    { value: 'au-bcast', label: 'AU Broadcast' },
+    { value: 'au-cable', label: 'AU Cable' }
   ]
+};
+
+const DEFAULT_CHANNEL_MAP = {
+  us: 'us-bcast',
+  ca: 'ca-bcast',
+  eu: 'eu-bcast',
+  au: 'au-bcast'
 };
 
 // Convert frequency (in Hz) to broadcast channel number
@@ -105,6 +117,26 @@ function frequencyToChannel(freqHz, region = 'us') {
       // Channel 21: 474 MHz center, then +8 MHz for each channel
       const channel = Math.round((freqMhz - 474) / 8) + 21;
       return Math.max(21, Math.min(60, channel));
+    }
+
+    return null; // Unknown frequency range
+  }
+
+  if (region === 'au') {
+    // Australian DVB-T frequencies (7 MHz raster)
+    // Band III (VHF): channels 6-12 with 9A (205.5 MHz) between 9 and 10
+    if (freqMhz >= 174 && freqMhz <= 230) {
+      const slot = Math.round((freqMhz - 177.5) / 7); // 0 = ch6 ... 4 = 9A ... 7 = ch12
+      if (slot === 4) return '9A';
+      const channel = slot < 4 ? slot + 6 : slot + 5;
+      return Math.max(6, Math.min(12, channel));
+    }
+
+    // Band IV/V (UHF): channels 28-51 (post digital dividend, 526-694 MHz)
+    if (freqMhz >= 526 && freqMhz <= 694) {
+      // Channel 28: 529.5 MHz center, then +7 MHz for each channel
+      const channel = Math.round((freqMhz - 529.5) / 7) + 28;
+      return Math.max(28, Math.min(51, channel));
     }
 
     return null; // Unknown frequency range
@@ -149,6 +181,10 @@ function frequencyToChannel(freqHz, region = 'us') {
 
 // Convert broadcast channel number to center frequency (in Hz)
 function channelToFrequency(channel, region = 'us') {
+  if (region === 'au' && String(channel).toUpperCase() === '9A') {
+    return 205.5 * 1000000;
+  }
+
   const ch = parseInt(channel, 10);
   if (isNaN(ch)) return null;
 
@@ -160,6 +196,21 @@ function channelToFrequency(channel, region = 'us') {
     // Band IV/V (UHF): channels 21-60
     if (ch >= 21 && ch <= 60) {
       return ((ch - 21) * 8 + 474) * 1000000;
+    }
+    return null;
+  }
+
+  if (region === 'au') {
+    // Band III (VHF): channels 6-9, then 10-12 shifted up past 9A
+    if (ch >= 6 && ch <= 9) {
+      return ((ch - 6) * 7 + 177.5) * 1000000;
+    }
+    if (ch >= 10 && ch <= 12) {
+      return ((ch - 10) * 7 + 212.5) * 1000000;
+    }
+    // Band IV/V (UHF): channels 28-51
+    if (ch >= 28 && ch <= 51) {
+      return ((ch - 28) * 7 + 529.5) * 1000000;
     }
     return null;
   }
@@ -264,9 +315,9 @@ function SignalBar({ value, stats }) {
 
 // Get channel range for region
 function getChannelRange(region) {
-  return region === 'eu'
-    ? { min: 5, max: 60 }  // EU: VHF 5-12, UHF 21-60
-    : { min: 2, max: 36 }; // US: VHF 2-13, UHF 14-36
+  if (region === 'eu') return { min: 5, max: 60 }; // EU: VHF 5-12, UHF 21-60
+  if (region === 'au') return { min: 6, max: 51 }; // AU: VHF 6-12, UHF 28-51
+  return { min: 2, max: 36 };                      // US: VHF 2-13, UHF 14-36
 }
 
 function SignalMeter() {
@@ -281,7 +332,7 @@ function SignalMeter() {
   const [selectedTuner, setSelectedTuner] = useState(0);
   const [channelMap, setChannelMap] = useState(() => {
     // Set default channel map based on region
-    return region === 'eu' ? 'eu-bcast' : 'us-bcast';
+    return DEFAULT_CHANNEL_MAP[region] || 'us-bcast';
   });
   const [selectedChannel, setSelectedChannel] = useState('');
   const [tunerStatus, setTunerStatus] = useState(null);
@@ -794,7 +845,7 @@ function SignalMeter() {
                       const newRegion = e.target.value;
                       setRegion(newRegion);
                       // Reset channel map to default for new region
-                      setChannelMap(newRegion === 'eu' ? 'eu-bcast' : 'us-bcast');
+                      setChannelMap(DEFAULT_CHANNEL_MAP[newRegion]);
                     }}
                   >
                     {REGIONS.map((r) => (
@@ -906,7 +957,7 @@ function SignalMeter() {
                           tuneToDirectChannel(directChannel);
                         }
                       }}
-                      placeholder={region === 'eu' ? '60' : '36'}
+                      placeholder={String(getChannelRange(region).max)}
                       sx={{
                         width: 60,
                         '& .MuiOutlinedInput-root': {
