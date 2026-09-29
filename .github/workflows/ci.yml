@@ -157,3 +157,50 @@ jobs:
           done
           docker logs smoke
           exit 1
+
+  chart:
+    name: Lint and validate Helm chart
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+        with:
+          version: v4.3.0
+      - name: helm lint
+        run: helm lint charts/hdhomerun-signal --strict --set 'hdhomerun.devices={192.0.2.10}'
+      - name: Render chart scenarios
+        run: |
+          mkdir -p rendered/secure rendered/hostnetwork
+          # Default, restricted-profile deployment with TLS ingress.
+          helm template ci charts/hdhomerun-signal \
+            --set 'hdhomerun.devices={192.0.2.10}' \
+            --set ingress.enabled=true \
+            --set 'ingress.tls[0].secretName=tls' \
+            --set 'ingress.tls[0].hosts[0]=hdhomerun.example.com' \
+            > rendered/secure/manifests.yaml
+          # Opt-in hostNetwork discovery mode (validated for schema only).
+          helm template ci charts/hdhomerun-signal \
+            --set hostNetwork=true --set hdhomerun.discovery.enabled=true \
+            > rendered/hostnetwork/manifests.yaml
+      - name: kubeconform
+        run: >
+          docker run --rm -v "$PWD/rendered:/m:ro"
+          ghcr.io/yannh/kubeconform@sha256:faffaf43f95aa6425306e1ab8d6fcad72acb9049158f38e574c085ea1ec0f64e
+          -strict -summary /m/secure /m/hostnetwork
+      - name: kube-linter (default deployment)
+        run: >
+          docker run --rm -v "$PWD/rendered:/m:ro"
+          ghcr.io/stackrox/kube-linter@sha256:f2bfce7879206d32f69ab6572c376f916643f54ca291ac38cf7d01ef591ff3f9
+          lint /m/secure
+      - name: Trivy misconfiguration scan (default deployment)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: config
+          scan-ref: rendered/secure
+          severity: HIGH,CRITICAL
+          exit-code: "1"

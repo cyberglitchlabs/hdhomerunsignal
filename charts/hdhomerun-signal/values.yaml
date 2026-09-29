@@ -1,0 +1,105 @@
+# Default values for hdhomerun-signal.
+# The defaults follow the "restricted" Pod Security Standard.
+
+image:
+  repository: ghcr.io/cyberglitchlabs/hdhomerunsignal
+  # Defaults to the chart appVersion.
+  tag: ""
+  # Optional immutable reference, e.g. "sha256:...". Takes precedence over tag.
+  digest: ""
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+hdhomerun:
+  # Tuner IP addresses or hostnames the app should manage. Required unless
+  # hostNetwork and discovery are both enabled.
+  devices: []
+  discovery:
+    # Broadcast auto-discovery cannot cross the pod network. It only works with
+    # hostNetwork: true on a node that shares a LAN with the tuners.
+    enabled: false
+
+# Browser origins allowed to call the API cross-origin (HDHR_ALLOWED_ORIGINS).
+# Empty means same-origin only, which is what the bundled UI needs.
+allowedOrigins: []
+
+# Runs the pod in the node's network namespace so broadcast discovery works.
+# This bypasses pod network isolation: NetworkPolicy does not apply, the pod
+# cannot satisfy the restricted Pod Security Standard, and it binds port 3000
+# on the node. Prefer static hdhomerun.devices.
+hostNetwork: false
+
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+
+service:
+  type: ClusterIP
+  port: 80
+
+# The app has no authentication. Only expose it beyond a trusted network behind
+# an authenticating proxy or VPN, and always with TLS.
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  hosts:
+    - host: hdhomerun.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+  # Set true to render an Ingress without TLS (not recommended).
+  allowInsecure: false
+
+networkPolicy:
+  enabled: true
+  ingress:
+    # Peers allowed to reach the app, as NetworkPolicy "from" entries.
+    # Empty allows pods in the release namespace only. Example for an ingress
+    # controller:
+    #   - namespaceSelector:
+    #       matchLabels:
+    #         kubernetes.io/metadata.name: ingress-nginx
+    from: []
+  egress:
+    # Extra egress rules, needed when hdhomerun.devices contains hostnames
+    # (only IPv4 addresses are turned into rules automatically).
+    extra: []
+
+podAnnotations: {}
+podLabels: {}
+
+# High, non-conflicting UID/GID: the image's files are root-owned and read-only,
+# so it runs as any unprivileged user.
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 10001
+  runAsGroup: 10001
+  fsGroup: 10001
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  runAsNonRoot: true
+  capabilities:
+    drop: ["ALL"]
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 128Mi
+  limits:
+    memory: 256Mi
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+extraEnv: []

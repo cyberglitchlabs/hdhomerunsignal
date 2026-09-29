@@ -81,6 +81,37 @@ OR
    - Open your browser to `http://your-server-ip:3000`
    - The app will automatically discover HDHomeRun devices on your network
 
+### Kubernetes (Helm)
+
+A Helm chart is included in [`charts/hdhomerun-signal`](charts/hdhomerun-signal). Container images are published to `ghcr.io/cyberglitchlabs/hdhomerunsignal` for amd64 and arm64.
+
+```bash
+helm install hdhr ./charts/hdhomerun-signal \
+  --namespace hdhomerun --create-namespace \
+  --set 'hdhomerun.devices={192.168.1.100}'
+
+kubectl -n hdhomerun port-forward svc/hdhr-hdhomerun-signal 8080:80
+```
+
+Tagged releases also publish the chart as an OCI artifact:
+`helm install hdhr oci://ghcr.io/cyberglitchlabs/charts/hdhomerun-signal --version <version> ...`
+
+**Device discovery.** Discovery works by broadcast, which does not cross the pod network. By default the chart therefore talks only to the tuner IPs or hostnames in `hdhomerun.devices`. To use auto-discovery, set `hostNetwork=true` and `hdhomerun.discovery.enabled=true` and schedule the pod on a node on the same LAN as the tuners. `hostNetwork` bypasses pod network isolation (NetworkPolicy does not apply and it does not meet the *restricted* Pod Security Standard), so prefer static device addresses.
+
+**Security defaults.** The pod runs as a non-root user with a read-only root filesystem, no capabilities, the `RuntimeDefault` seccomp profile, and no service account token. A NetworkPolicy limits egress to DNS and the tuner control port (65001) and ingress to the release namespace; use `networkPolicy.ingress.from` to admit your ingress controller. The Ingress is off by default and requires TLS when enabled.
+
+> **The app has no authentication.** Anyone who can reach it can retune your tuners. Keep it on a trusted network, or put it behind an authenticating reverse proxy or VPN.
+
+### Image provenance
+
+Release images are scanned for fixable HIGH/CRITICAL vulnerabilities before publishing, carry an SBOM and SLSA provenance, and are signed with [cosign](https://github.com/sigstore/cosign) using GitHub's OIDC identity (no long-lived keys):
+
+```bash
+cosign verify ghcr.io/cyberglitchlabs/hdhomerunsignal:<tag> \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  --certificate-identity-regexp '^https://github.com/cyberglitchlabs/hdhomerunsignal/\.github/workflows/release\.yml@'
+```
+
 ## Usage
 
 ### Normal Mode
@@ -129,6 +160,7 @@ Perfect for aligning your antenna for optimal signal reception:
 | `PORT` | Web server port | `3000` |
 | `HDHOMERUN_DEVICES` | Comma-separated list of device IPs or hostnames to manually add (supplements auto-discovery) | *(empty)* |
 | `HDHOMERUN_DISABLE_DISCOVERY` | Set to `true` to disable auto-discovery (use only manually specified devices) | `false` |
+| `HDHR_ALLOWED_ORIGINS` | Comma-separated browser origins (e.g. `https://hdhr.example.com`) allowed to call the API cross-origin. Only needed if the UI is served from a different origin than the API | *(empty, same-origin only)* |
 
 **Examples:**
 
