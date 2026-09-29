@@ -1,0 +1,25 @@
+.git
+.github
+.claude
+.gitignore
+.dockerignore
+
+# Dependencies and build output are produced inside the image
+**/node_modules
+**/build
+frontend/public/build-version.json
+
+# Tests, docs, images and deploy tooling are not part of the runtime image
+**/*.test.js
+*.md
+*.png
+docs
+charts
+deploy-to-staging
+docker-compose.yml
+Dockerfile
+
+# Secrets and local config
+.env
+.env.*
+**/*.log
