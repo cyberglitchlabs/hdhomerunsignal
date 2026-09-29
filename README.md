@@ -2,6 +2,8 @@
 
 A modern web application that replaces the discontinued HDHomeRun Signal Android app. This web app provides real-time signal monitoring, channel tuning, and device management for HDHomeRun devices in the United States, Canada, United Kingdom/EU and Australia.
 
+> **This is a fork** of [Petelombardo/hdhomerunsignal](https://github.com/Petelombardo/hdhomerunsignal), the original HDHomeRun Signal Monitor by Pete Lombardo, who deserves the credit for the app itself. This fork adds security hardening (input validation and a fix for a command-injection vulnerability, rate limiting, CORS and WebSocket origin checks), a hardened container image, CI with vulnerability and code scanning and signed images, and a Helm chart for Kubernetes. See the commit history for the details.
+
 ## Features
 
 - **Multi-Region Support**: Supports US/Canada (ATSC), UK/EU (DVB-T/T2) and Australia (DVB-T) broadcast standards with region-specific channel maps
@@ -284,9 +286,6 @@ To run in development mode:
 - Check firewall settings
 - Ensure port 3000 is accessible
 - Verify Docker container is running with host networking
-
-## Buy Me A Coffee
-<img width="433" height="439" alt="image" src="https://github.com/user-attachments/assets/e8555d66-fb4b-4f8e-88a8-35fc613ea400" />
 
 ## License
 
