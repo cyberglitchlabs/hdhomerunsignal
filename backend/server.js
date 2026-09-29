@@ -748,7 +748,7 @@ class HDHomeRunController {
   async getPlpInfo(deviceId, tuner = 0) {
     return new Promise((resolve, reject) => {
       hdhr([deviceId, 'get', `/tuner${tuner}/plpinfo`], (error, stdout) => {
-        console.log('PLP Info for %s tuner %s: %s', validate.logSafe(deviceId), tuner, validate.logSafe(error ? 'ERROR: ' + error.message : stdout));
+        console.log('PLP Info for %s tuner %s: %s', validate.logSafe(deviceId), validate.logSafe(tuner), validate.logSafe(error ? 'ERROR: ' + error.message : stdout));
         
         if (error) {
           resolve(null);

@@ -74,8 +74,10 @@ function displayName(value) {
 // become spaces so a value cannot forge extra log entries, and the length is
 // bounded.
 function logSafe(value) {
-  // eslint-disable-next-line no-control-regex
-  const text = String(value).replace(/[\x00-\x1f\x7f]/g, ' ');
+  const text = String(value)
+    .replace(/\r|\n/g, ' ')
+    // eslint-disable-next-line no-control-regex
+    .replace(/[\x00-\x1f\x7f]/g, ' ');
   return text.length > MAX_LOG_LENGTH ? `${text.slice(0, MAX_LOG_LENGTH)}…` : text;
 }
 
