@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React from 'react';
 import {
   Box,
   Card,
@@ -8,32 +8,8 @@ import {
   Grid,
   Paper
 } from '@mui/material';
-import { Line } from 'react-chartjs-2';
-import {
-  Chart as ChartJS,
-  CategoryScale,
-  LinearScale,
-  PointElement,
-  LineElement,
-  Title,
-  Tooltip,
-  Legend,
-  Filler
-} from 'chart.js';
-
-// Register Chart.js components
-ChartJS.register(
-  CategoryScale,
-  LinearScale,
-  PointElement,
-  LineElement,
-  Title,
-  Tooltip,
-  Legend,
-  Filler
-);
-
-const MAX_DATA_POINTS = 60; // Keep 60 seconds of data
+import SignalHistoryChart, { SERIES_SIGNAL, SERIES_SNR } from './SignalHistoryChart';
+import { useSignalHistory } from '../hooks/useSignalHistory';
 
 // Convert frequency (in Hz) to broadcast channel number
 function frequencyToChannel(freqHz) {
@@ -97,59 +73,35 @@ function formatChannelDisplay(channelStr) {
   return channelStr; // Fallback to raw format
 }
 
+// The two per-tuner history charts. Keeps its own rolling history: it restarts
+// when the tuner's channel changes and records every reading, lock or not.
+function TunerHistoryCharts({ status }) {
+  const history = useSignalHistory(status, { resetKey: status?.channel || 'none', fixedWindow: false });
+
+  return (
+    <Grid container spacing={1}>
+      <Grid item xs={6}>
+        <Typography variant="caption" sx={{ fontSize: '0.7rem', fontWeight: 500 }}>
+          Signal: {status?.ss || 0}%
+        </Typography>
+        <Box sx={{ height: 80, mt: 0.5 }}>
+          <SignalHistoryChart history={history} series={SERIES_SIGNAL} variant="compact" />
+        </Box>
+      </Grid>
+
+      <Grid item xs={6}>
+        <Typography variant="caption" sx={{ fontSize: '0.7rem', fontWeight: 500 }}>
+          SNR: {status?.snq || 0}%
+        </Typography>
+        <Box sx={{ height: 80, mt: 0.5 }}>
+          <SignalHistoryChart history={history} series={SERIES_SNR} variant="compact" />
+        </Box>
+      </Grid>
+    </Grid>
+  );
+}
+
 function AntennaMode({ allTunersData }) {
-  const [historyData, setHistoryData] = useState({});
-  const lastChannelRef = useRef({}); // Track last-seen channel per tuner
-
-  // Update history data when new tuner data arrives
-  useEffect(() => {
-    if (!allTunersData || allTunersData.length === 0) return;
-
-    setHistoryData(prev => {
-      const newHistory = { ...prev };
-
-      allTunersData.forEach(({ tuner, status }) => {
-        const currentChannel = status?.channel || 'none';
-        const lastChannel = lastChannelRef.current[tuner];
-
-        // Reset history if channel changed for this tuner
-        if (lastChannel !== undefined && lastChannel !== currentChannel) {
-          newHistory[tuner] = {
-            signal: [],
-            snr: [],
-            timestamps: []
-          };
-        }
-        lastChannelRef.current[tuner] = currentChannel;
-
-        if (!newHistory[tuner]) {
-          newHistory[tuner] = {
-            signal: [],
-            snr: [],
-            timestamps: []
-          };
-        }
-
-        const history = newHistory[tuner];
-        const now = new Date().toLocaleTimeString();
-
-        // Add new data point
-        history.signal.push(status?.ss || 0);
-        history.snr.push(status?.snq || 0);
-        history.timestamps.push(now);
-
-        // Keep only MAX_DATA_POINTS
-        if (history.signal.length > MAX_DATA_POINTS) {
-          history.signal.shift();
-          history.snr.shift();
-          history.timestamps.shift();
-        }
-      });
-
-      return newHistory;
-    });
-  }, [allTunersData]);
-
   const getSymbolColor = (symbolQuality) => {
     if (symbolQuality === 100) return 'success';
     if (symbolQuality > 0) return 'error';
@@ -160,61 +112,6 @@ function AntennaMode({ allTunersData }) {
     if (symbolQuality === 100) return '100% ✓';
     if (symbolQuality > 0) return `${symbolQuality}%`;
     return 'No Signal';
-  };
-
-  const createChartData = (tuner, type) => {
-    const history = historyData[tuner];
-    if (!history) return null;
-
-    const data = type === 'signal' ? history.signal : history.snr;
-    const color = type === 'signal' ? 'rgba(76, 175, 80, 1)' : 'rgba(255, 152, 0, 1)';
-    const fillColor = type === 'signal' ? 'rgba(76, 175, 80, 0.1)' : 'rgba(255, 152, 0, 0.1)';
-
-    return {
-      labels: history.timestamps,
-      datasets: [
-        {
-          label: type === 'signal' ? 'Signal' : 'SNR',
-          data: data,
-          borderColor: color,
-          backgroundColor: fillColor,
-          borderWidth: 2,
-          fill: true,
-          tension: 0.4,
-          pointRadius: 0
-        }
-      ]
-    };
-  };
-
-  const chartOptions = {
-    responsive: true,
-    maintainAspectRatio: false,
-    animation: false,
-    scales: {
-      y: {
-        min: 0,
-        max: 100,
-        ticks: {
-          color: 'rgba(255, 255, 255, 0.7)',
-          font: { size: 10 }
-        },
-        grid: {
-          color: 'rgba(255, 255, 255, 0.1)'
-        }
-      },
-      x: {
-        display: false
-      }
-    },
-    plugins: {
-      legend: {
-        display: false
-      },
-      tooltip: {
-        enabled: false
-      }
-    }
   };
 
   if (!allTunersData || allTunersData.length === 0) {
@@ -256,29 +153,7 @@ function AntennaMode({ allTunersData }) {
                   </Typography>
                 )}
 
-                <Grid container spacing={1}>
-                  <Grid item xs={6}>
-                    <Typography variant="caption" sx={{ fontSize: '0.7rem', fontWeight: 500 }}>
-                      Signal: {status?.ss || 0}%
-                    </Typography>
-                    <Box sx={{ height: 80, mt: 0.5 }}>
-                      {historyData[tuner] && (
-                        <Line data={createChartData(tuner, 'signal')} options={chartOptions} />
-                      )}
-                    </Box>
-                  </Grid>
-
-                  <Grid item xs={6}>
-                    <Typography variant="caption" sx={{ fontSize: '0.7rem', fontWeight: 500 }}>
-                      SNR: {status?.snq || 0}%
-                    </Typography>
-                    <Box sx={{ height: 80, mt: 0.5 }}>
-                      {historyData[tuner] && (
-                        <Line data={createChartData(tuner, 'snr')} options={chartOptions} />
-                      )}
-                    </Box>
-                  </Grid>
-                </Grid>
+                <TunerHistoryCharts status={status} />
               </CardContent>
             </Card>
           </Grid>
