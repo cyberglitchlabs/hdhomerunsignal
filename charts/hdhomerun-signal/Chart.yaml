@@ -1,0 +1,15 @@
+apiVersion: v2
+name: hdhomerun-signal
+description: Web-based signal monitor and antenna tuning tool for HDHomeRun tuners
+type: application
+version: 0.1.0
+# Default image tag; matches the semver image tags published by the release workflow.
+appVersion: "0.1.0"
+kubeVersion: ">=1.25.0-0"
+home: https://github.com/cyberglitchlabs/hdhomerunsignal
+sources:
+  - https://github.com/cyberglitchlabs/hdhomerunsignal
+keywords:
+  - hdhomerun
+  - antenna
+  - signal

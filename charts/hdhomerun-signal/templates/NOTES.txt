@@ -1,0 +1,23 @@
+HDHomeRun Signal Monitor is deployed.
+
+{{- if .Values.ingress.enabled }}
+{{- range .Values.ingress.hosts }}
+  URL: {{ if $.Values.ingress.tls }}https{{ else }}http{{ end }}://{{ .host }}
+{{- end }}
+{{- else }}
+
+Reach it from your workstation with:
+
+  kubectl --namespace {{ .Release.Namespace }} port-forward svc/{{ include "hdhomerun-signal.fullname" . }} 8080:{{ .Values.service.port }}
+
+then open http://localhost:8080
+{{- end }}
+
+SECURITY: this application has no authentication. Anyone who can reach it can
+change tuner channels. Keep it on a trusted network, or place it behind an
+authenticating proxy or VPN, and use TLS.
+{{- if .Values.hostNetwork }}
+
+WARNING: hostNetwork is enabled. The pod shares the node's network, NetworkPolicy
+does not apply to it, and port 3000 is bound on the node.
+{{- end }}
