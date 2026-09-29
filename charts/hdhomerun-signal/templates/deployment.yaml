@@ -61,6 +61,11 @@ spec:
             - name: HDHR_ALLOWED_ORIGINS
               value: {{ join "," .Values.allowedOrigins | quote }}
             {{- end }}
+            {{- $trustProxy := toString (default "" .Values.trustProxy) }}
+            {{- if $trustProxy }}
+            - name: HDHR_TRUST_PROXY
+              value: {{ $trustProxy | quote }}
+            {{- end }}
             {{- with .Values.extraEnv }}
             {{- toYaml . | nindent 12 }}
             {{- end }}

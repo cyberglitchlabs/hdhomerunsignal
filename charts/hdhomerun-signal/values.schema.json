@@ -29,6 +29,11 @@
     },
     "allowedOrigins": { "type": "array", "items": { "type": "string" } },
     "hostNetwork": { "type": "boolean" },
+    "trustProxy": {
+      "type": ["string", "integer", "null"],
+      "minimum": 1,
+      "maximum": 32
+    },
     "service": {
       "type": "object",
       "properties": {

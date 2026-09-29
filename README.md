@@ -102,6 +102,10 @@ Tagged releases also publish the chart as an OCI artifact:
 
 > **The app has no authentication.** Anyone who can reach it can retune your tuners. Keep it on a trusted network, or put it behind an authenticating reverse proxy or VPN.
 
+**Behind an ingress or reverse proxy.** Set `trustProxy` (the `HDHR_TRUST_PROXY` variable) so per-client rate limiting sees each user's real address; `--set trustProxy=1` is right for a single ingress controller directly in front of the pod. Without it every client shares the proxy's address and therefore one rate-limit bucket. Set it to the number of proxies you actually run, or their addresses, and no more: trusting a proxy hop that is not there lets any client spoof its address with an `X-Forwarded-For` header. (Tested with one hop; if a load balancer sits in front of your ingress controller, count both.)
+
+The proxy must also **preserve the original `Host` header** (nginx-ingress does by default). The API and WebSocket reject browser requests whose `Origin` does not match the `Host` they arrive with, and `X-Forwarded-Host` is not consulted. If your proxy rewrites `Host`, list the public origin in `allowedOrigins` (`HDHR_ALLOWED_ORIGINS`) instead.
+
 ### Image provenance
 
 Release images are scanned for fixable HIGH/CRITICAL vulnerabilities before publishing, carry an SBOM and SLSA provenance, and are signed with [cosign](https://github.com/sigstore/cosign) using GitHub's OIDC identity (no long-lived keys):
@@ -161,6 +165,8 @@ Perfect for aligning your antenna for optimal signal reception:
 | `HDHOMERUN_DEVICES` | Comma-separated list of device IPs or hostnames to manually add (supplements auto-discovery) | *(empty)* |
 | `HDHOMERUN_DISABLE_DISCOVERY` | Set to `true` to disable auto-discovery (use only manually specified devices) | `false` |
 | `HDHR_ALLOWED_ORIGINS` | Comma-separated browser origins (e.g. `https://hdhr.example.com`) allowed to call the API cross-origin. Only needed if the UI is served from a different origin than the API | *(empty, same-origin only)* |
+| `HDHR_RATE_LIMIT` | Requests per minute allowed per client address (channel scans have a separate, stricter limit). `0` disables limiting | `300` |
+| `HDHR_TRUST_PROXY` | Which reverse proxies may set `X-Forwarded-For`, so rate limiting sees the real client address: a proxy hop count (`1`-`32`) or a comma-separated list of proxy IPs/CIDRs (e.g. `10.42.0.0/16`). `true`, `false`, `0` and zero-length prefixes such as `0.0.0.0/0` are refused, and **an invalid value stops the server from starting**. Leave unset if the app is not behind a proxy | *(empty, trust nothing)* |
 
 **Examples:**
 
