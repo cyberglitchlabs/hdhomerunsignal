@@ -27,7 +27,11 @@ It runs as a small container on your network (Docker, Docker Compose or Kubernet
 
 ## Screenshots
 
-Antenna Mode
+Main view: live meters with session markers and a 60-second signal/SNR history
+
+<img src="screenshot-hdhrsignal.png" alt="Main view showing signal, SNR and symbol quality meters and a signal history chart" width="700">
+
+Antenna mode: every tuner at a glance
 
 <img src="antenna-mode.png" alt="Antenna tuning mode showing live signal graphs for each tuner" width="700">
 
