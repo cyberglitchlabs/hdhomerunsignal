@@ -1235,7 +1235,7 @@ function SignalMeter() {
                                 const freq = rawChannel.length >= 9 ? rawChannel : channelToFrequency(rawChannel, region);
                                 if (!freq) return;
                                 const channelName = `${program.callsign} ${program.virtualChannel}`;
-                                window.location.href = `/api/devices/${selectedDevice}/stream/play.m3u?ch=${freq}&program=${program.programNum}&name=${encodeURIComponent(channelName)}`;
+                                window.location.href = `/api/devices/${encodeURIComponent(selectedDevice)}/stream/play.m3u?ch=${encodeURIComponent(freq)}&program=${encodeURIComponent(program.programNum)}&name=${encodeURIComponent(channelName)}`;
                               }}
                               onContextMenu={(e) => {
                                 e.preventDefault();
