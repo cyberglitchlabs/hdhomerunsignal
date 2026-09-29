@@ -70,12 +70,12 @@ function displayName(value) {
   return value.replace(/[\x00-\x1f\x7f]/g, '').slice(0, MAX_NAME_LENGTH);
 }
 
-// Renders any value for a log line: control characters (newlines included)
-// become spaces so a value cannot forge extra log entries, and the length is
-// bounded.
+// Renders any value for a log line: line breaks are removed and other control
+// characters become spaces, so a value cannot forge extra log entries, and the
+// length is bounded.
 function logSafe(value) {
   const text = String(value)
-    .replace(/\r|\n/g, ' ')
+    .replace(/\n|\r/g, '')
     // eslint-disable-next-line no-control-regex
     .replace(/[\x00-\x1f\x7f]/g, ' ');
   return text.length > MAX_LOG_LENGTH ? `${text.slice(0, MAX_LOG_LENGTH)}…` : text;
