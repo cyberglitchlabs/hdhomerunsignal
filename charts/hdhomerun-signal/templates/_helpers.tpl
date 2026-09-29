@@ -61,4 +61,8 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- if and .Values.ingress.enabled (not .Values.ingress.tls) (not .Values.ingress.allowInsecure) -}}
 {{- fail "ingress.enabled requires ingress.tls (the app has no authentication); set ingress.allowInsecure=true to override" -}}
 {{- end -}}
+{{- $trustProxy := toString (default "" .Values.trustProxy) | trim | lower -}}
+{{- if or (kindIs "bool" .Values.trustProxy) (eq $trustProxy "true") (eq $trustProxy "false") -}}
+{{- fail "trustProxy must be a proxy hop count (e.g. 1) or a list of proxy IPs/CIDRs, not true/false: trusting every client's X-Forwarded-For lets it spoof its address; leave it empty to trust nothing" -}}
+{{- end -}}
 {{- end }}

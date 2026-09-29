@@ -100,3 +100,34 @@ test('logSafe flattens control characters so values cannot forge log lines', () 
   assert.equal(v.logSafe(undefined), 'undefined');
   assert.equal(v.logSafe(new Error('bad\nthing')), 'Error: badthing');
 });
+
+test('parseTrustProxy: unset or blank means "do not trust"', () => {
+  for (const unset of [undefined, null, '', '   ']) {
+    assert.deepEqual(v.parseTrustProxy(unset), { value: false });
+  }
+});
+
+test('parseTrustProxy: hop counts', () => {
+  assert.deepEqual(v.parseTrustProxy('1'), { value: 1 });
+  assert.deepEqual(v.parseTrustProxy(' 2 '), { value: 2 });
+  assert.deepEqual(v.parseTrustProxy('32'), { value: 32 });
+});
+
+test('parseTrustProxy: IP and CIDR lists', () => {
+  assert.deepEqual(v.parseTrustProxy('10.42.0.0/16'), { value: ['10.42.0.0/16'] });
+  assert.deepEqual(v.parseTrustProxy('10.0.0.1, 192.168.0.0/16'), { value: ['10.0.0.1', '192.168.0.0/16'] });
+  assert.deepEqual(v.parseTrustProxy('::1'), { value: ['::1'] });
+  assert.deepEqual(v.parseTrustProxy('fd00::/8'), { value: ['fd00::/8'] });
+  assert.deepEqual(v.parseTrustProxy('10.0.0.5/32'), { value: ['10.0.0.5/32'] });
+});
+
+test('parseTrustProxy: refuses values that would trust arbitrary clients or are malformed', () => {
+  const bad = ['true', 'TRUE', 'false', 'yes', '0', '-1', '33', '1.5', '1e2', '007',
+    '0.0.0.0/0', '::/0', '10.0.0.0/33', '10.0.0.0/', '10.0.0.0/-1', '10.0.0.0/8/8',
+    '999.1.1.1', '10.0.0.1,,', ',', '1;id', 'loopback', 'uniquelocal', 'abc', '10.0.0.1 10.0.0.2'];
+  for (const input of bad) {
+    const result = v.parseTrustProxy(input);
+    assert.equal(result.value, undefined, `${input} must not yield a value`);
+    assert.match(result.error, /HDHR_TRUST_PROXY/, input);
+  }
+});

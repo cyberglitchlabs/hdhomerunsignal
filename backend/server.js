@@ -45,10 +45,21 @@ const io = new Server(server, {
 
 app.disable('x-powered-by');
 
+// Behind a reverse proxy the client address comes from X-Forwarded-For, which is
+// only safe to believe when it was set by a proxy we trust. HDHR_TRUST_PROXY is
+// a proxy hop count or a list of proxy IPs/CIDRs; unset means "do not trust".
+// An invalid value stops the server rather than silently falling back.
+const trustProxy = validate.parseTrustProxy(process.env.HDHR_TRUST_PROXY);
+if (trustProxy.error) {
+  console.error(validate.logSafe(trustProxy.error));
+  process.exit(1);
+}
+app.set('trust proxy', trustProxy.value);
+
 // Every API call spawns a hdhomerun_config process, so requests are limited per
-// client address. HDHR_RATE_LIMIT is requests per minute (0 disables). Behind a
-// reverse proxy all clients currently share the proxy's address and therefore
-// one bucket; the default is generous enough for that.
+// client address. HDHR_RATE_LIMIT is requests per minute (0 disables). Without
+// HDHR_TRUST_PROXY, clients behind a reverse proxy all share the proxy's address
+// and therefore one bucket; the default is generous enough for that.
 const rateLimitPerMinute = Number.parseInt(process.env.HDHR_RATE_LIMIT || '300', 10);
 const tooManyRequests = (req, res) => res.status(429).json({ error: 'Too many requests' });
 const generalLimiter = rateLimit({

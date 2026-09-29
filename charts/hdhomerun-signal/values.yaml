@@ -56,6 +56,16 @@ ingress:
   # Set true to render an Ingress without TLS (not recommended).
   allowInsecure: false
 
+# Which proxies in front of the app may set X-Forwarded-For (HDHR_TRUST_PROXY).
+# The app rate-limits per client address, so behind an ingress controller you
+# want this set, otherwise every client shares the controller's single bucket.
+# Either the number of trusted proxy hops (1 for a single ingress controller) or
+# a comma-separated list of proxy IPs/CIDRs (e.g. "10.42.0.0/16"). Empty means
+# "trust nothing", which is right when the app is not behind a proxy. Do not
+# trust more than you run: true, false and zero-length prefixes such as 0.0.0.0/0
+# are rejected, because they would let any client spoof its address.
+trustProxy: ""
+
 networkPolicy:
   enabled: true
   ingress:
