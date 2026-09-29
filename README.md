@@ -1,6 +1,13 @@
 # HDHomeRun Signal Monitor
 
+[![Release](https://github.com/cyberglitchlabs/hdhomerunsignal/actions/workflows/release.yml/badge.svg)](https://github.com/cyberglitchlabs/hdhomerunsignal/actions/workflows/release.yml)
+[![CodeQL](https://github.com/cyberglitchlabs/hdhomerunsignal/actions/workflows/codeql.yml/badge.svg)](https://github.com/cyberglitchlabs/hdhomerunsignal/actions/workflows/codeql.yml)
+
 A modern web application that replaces the discontinued HDHomeRun Signal Android app. This web app provides real-time signal monitoring, channel tuning, and device management for HDHomeRun devices in the United States, Canada, United Kingdom/EU and Australia.
+
+It runs as a small container on your network (Docker, Docker Compose or Kubernetes), close to your antenna, and works from any browser or phone.
+
+> This project is a fork of [Petelombardo/hdhomerunsignal](https://github.com/Petelombardo/hdhomerunsignal), the original HDHomeRun Signal Monitor by Pete Lombardo, who deserves the credit for the app itself. This fork adds a hardened container image, CI with vulnerability scanning and signed images, and a Helm chart for Kubernetes, along with some security hardening.
 
 ## Features
 
@@ -18,14 +25,11 @@ A modern web application that replaces the discontinued HDHomeRun Signal Android
 - **Responsive Design**: Works on both desktop and mobile devices
 - **Modern UI**: Clean, dark theme interface with Material-UI components
 
-## Screenshots Reference
-Main Mode
-<img width="929" height="1033" alt="image" src="https://github.com/user-attachments/assets/ba400c79-5cfe-4e51-bc7c-e9cc2239dc65" />
-
+## Screenshots
 
 Antenna Mode
-<img width="1084" height="1252" alt="image" src="https://github.com/user-attachments/assets/1fab4b4e-dc43-428c-9367-4324bb79d8df" />
 
+<img src="antenna-mode.png" alt="Antenna tuning mode showing live signal graphs for each tuner" width="700">
 
 The original Android app functionality has been recreated and enhanced with:
 - Region selection (US / Canada / UK-EU / Australia) with appropriate broadcast standards
@@ -43,13 +47,13 @@ The original Android app functionality has been recreated and enhanced with:
 
 ## Prerequisites
 
-- Docker and Docker Compose
+- Docker and Docker Compose, or a Kubernetes cluster
 - HDHomeRun device(s) on your network
-- Network access for device discovery (requires host networking mode)
+- For automatic device discovery, the container needs host networking, because discovery is a network broadcast. If the broadcast finds nothing, pressing refresh falls back to SiliconDust's discovery service (`ipv4-api.hdhomerun.com`). To avoid any outside lookup, list your tuners in `HDHOMERUN_DEVICES` and set `HDHOMERUN_DISABLE_DISCOVERY=true`.
 
 ### System Requirements
 
-**Prebuilt Docker images are available for:**
+**Prebuilt container images** are published for:
 - **x86_64** (AMD64) - Traditional desktops and servers
 - **ARM64** (aarch64) - Raspberry Pi 4/5, Orange Pi, Banana Pi, and other ARMv8 SBCs
 
@@ -59,27 +63,50 @@ The original Android app functionality has been recreated and enhanced with:
 - More than sufficient processing power for signal monitoring
 - Cost-effective dedicated hardware
 
-**Other architectures:** If your CPU architecture is not among the supported ones, you can build the container yourself from source. A minimum of 4GB RAM is required for compilation.
+**32-bit ARM (armv7) is not supported.** The base image does not provide that architecture.
 
-The Docker image will automatically select the correct architecture for your platform.
+The container image automatically selects the right architecture for your platform.
 
 ## Installation & Setup
 
-Pull the pre-built container from Docker Hub
-https://hub.docker.com/r/petelombardo/hdhomerun-signal-web
+### Docker Compose
 
-OR
+Save this as `docker-compose.yml` and run `docker compose up -d`:
 
-1. **Clone or download this project to your server**
+```yaml
+services:
+  hdhomerun-signal:
+    image: ghcr.io/cyberglitchlabs/hdhomerunsignal:latest
+    network_mode: host          # needed for automatic device discovery
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      - PORT=3000
+      # Optional: add tuners by IP or hostname (also works without host networking)
+      #- HDHOMERUN_DEVICES=192.168.1.100,192.168.2.50
+      # Optional: only use the devices listed above
+      #- HDHOMERUN_DISABLE_DISCOVERY=true
+```
 
-2. **Build and start the container:**
-   ```bash
-   docker-compose up -d
-   ```
+Then open `http://your-server-ip:3000`. The app discovers HDHomeRun devices on your network automatically.
 
-3. **Access the web interface:**
-   - Open your browser to `http://your-server-ip:3000`
-   - The app will automatically discover HDHomeRun devices on your network
+Pin a version tag (for example `:0.1.0`) or an image digest instead of `latest` if you want updates to be deliberate. The container runs as an unprivileged user, so the settings above (read-only filesystem, no capabilities) work without any further configuration.
+
+### Build from source
+
+```bash
+git clone https://github.com/cyberglitchlabs/hdhomerunsignal.git
+cd hdhomerunsignal
+docker compose up -d --build
+```
+
+The bundled `docker-compose.yml` publishes port 3000 instead of using host networking, so set `HDHOMERUN_DEVICES` in it (or switch it to `network_mode: host`) so your tuners are found.
 
 ### Kubernetes (Helm)
 
@@ -182,17 +209,6 @@ HDHOMERUN_DISABLE_DISCOVERY=true
 HDHOMERUN_DEVICES=192.168.1.100,192.168.1.101
 ```
 
-**Docker Compose example:**
-```yaml
-services:
-  hdhomerun-signal:
-    image: petelombardo/hdhomerun-signal-web
-    network_mode: host
-    environment:
-      - HDHOMERUN_DEVICES=192.168.2.50,192.168.2.51
-      - HDHOMERUN_DISABLE_DISCOVERY=false
-```
-
 ### Region Selection
 Select your region (United States, Canada, United Kingdom/EU or Australia) to configure the app for your broadcast standard:
 - **United States**: ATSC 1.0/3.0 broadcasts, channels 2-36
@@ -233,10 +249,12 @@ Select your region (United States, Canada, United Kingdom/EU or Australia) to co
 - **Communication**: REST API + WebSockets for real-time updates
 - **HDHomeRun Integration**: Uses `hdhomerun_config` command-line tool
 
-### Docker Configuration
-- Uses host networking mode for device discovery
-- Multi-stage build for optimized image size
-- Automatic installation of hdhomerun_config binary
+### Container
+- Multi-stage build on a digest-pinned Node.js base image; production dependencies only
+- Runs as a non-root user, and works with a read-only root filesystem and all capabilities dropped
+- `hdhomerun_config` is installed from the distribution's package repository
+- Built-in healthcheck and clean shutdown on `SIGTERM`
+- Host networking is only needed for broadcast discovery; otherwise list tuners in `HDHOMERUN_DEVICES`
 
 ### API Endpoints
 - `GET /api/devices` - Discover HDHomeRun devices
@@ -258,15 +276,19 @@ To run in development mode:
 
 1. **Backend** (in `/backend` directory):
    ```bash
-   npm install
+   npm ci
    npm run dev
    ```
 
 2. **Frontend** (in `/frontend` directory):
    ```bash
-   npm install
+   npm ci
    npm start
    ```
+
+Run the backend tests with `npm test` in `/backend`.
+
+Pull requests are checked by CI: unit tests, `npm audit`, Dockerfile and workflow linting, secret scanning, dependency review, CodeQL, a Trivy scan of the built image, Helm chart validation, and a smoke test of the image under a read-only filesystem with all capabilities dropped. Pushes to `main` build, scan, publish and sign the image.
 
 ## Troubleshooting
 
@@ -285,9 +307,12 @@ To run in development mode:
 - Ensure port 3000 is accessible
 - Verify Docker container is running with host networking
 
-## Buy Me A Coffee
-<img width="433" height="439" alt="image" src="https://github.com/user-attachments/assets/e8555d66-fb4b-4f8e-88a8-35fc613ea400" />
+## Security
+
+The app has **no authentication**: anyone who can reach it can retune your tuners. Run it on a trusted network, or put it behind an authenticating reverse proxy or VPN, and do not expose it directly to the internet.
+
+If you find a security problem, please open an issue that describes the area affected without including exploit details, and a maintainer will follow up.
 
 ## License
 
-This project is provided as-is for personal use. HDHomeRun is a trademark of SiliconDust Engineering Ltd.
+This project is provided as-is for personal use. Based on the original work by Pete Lombardo. HDHomeRun is a trademark of SiliconDust Engineering Ltd.
