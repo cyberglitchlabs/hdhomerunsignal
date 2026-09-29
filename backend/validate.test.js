@@ -91,3 +91,12 @@ test('displayName strips control characters and caps length', () => {
   assert.equal(v.displayName(undefined), null);
   assert.equal(v.displayName(['a']), null);
 });
+
+test('logSafe flattens control characters so values cannot forge log lines', () => {
+  assert.equal(v.logSafe('plain text'), 'plain text');
+  assert.equal(v.logSafe('a\nFAKE LOG LINE\r\nb'), 'aFAKE LOG LINEb');
+  assert.equal(v.logSafe('tab\there'), 'tab here');
+  assert.equal(v.logSafe('x'.repeat(2000)).length, 1000 + 1); // truncated + ellipsis marker
+  assert.equal(v.logSafe(undefined), 'undefined');
+  assert.equal(v.logSafe(new Error('bad\nthing')), 'Error: badthing');
+});

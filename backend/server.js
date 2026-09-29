@@ -4,6 +4,7 @@ const { Server } = require('socket.io');
 const { execFile } = require('child_process');
 const https = require('https');
 const path = require('path');
+const rateLimit = require('express-rate-limit');
 const validate = require('./validate');
 
 // hdhomerun_config is always run without a shell: arguments are passed as an
@@ -43,6 +44,31 @@ const io = new Server(server, {
 });
 
 app.disable('x-powered-by');
+
+// Every API call spawns a hdhomerun_config process, so requests are limited per
+// client address. HDHR_RATE_LIMIT is requests per minute (0 disables). Behind a
+// reverse proxy all clients currently share the proxy's address and therefore
+// one bucket; the default is generous enough for that.
+const rateLimitPerMinute = Number.parseInt(process.env.HDHR_RATE_LIMIT || '300', 10);
+const tooManyRequests = (req, res) => res.status(429).json({ error: 'Too many requests' });
+const generalLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  limit: rateLimitPerMinute,
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+  handler: tooManyRequests,
+  skip: () => rateLimitPerMinute <= 0
+});
+// A channel scan occupies a tuner for up to a minute, so it gets a tight limit.
+const scanLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  limit: 6,
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+  handler: tooManyRequests,
+  skip: () => rateLimitPerMinute <= 0
+});
+app.use(generalLimiter);
 app.use((req, res, next) => {
   const origin = req.headers.origin;
   if (origin && allowedOrigins.has(origin)) {
@@ -216,7 +242,7 @@ class HDHomeRunController {
       });
 
       req.on('error', (err) => {
-        console.error('HTTP discovery request error:', err.message);
+        console.error('HTTP discovery request error: %s', validate.logSafe(err.message));
         resolve([]);
       });
 
@@ -722,7 +748,7 @@ class HDHomeRunController {
   async getPlpInfo(deviceId, tuner = 0) {
     return new Promise((resolve, reject) => {
       hdhr([deviceId, 'get', `/tuner${tuner}/plpinfo`], (error, stdout) => {
-        console.log(`PLP Info for ${deviceId} tuner ${tuner}:`, error ? 'ERROR: ' + error.message : stdout);
+        console.log('PLP Info for %s tuner %s: %s', validate.logSafe(deviceId), validate.logSafe(tuner), validate.logSafe(error ? 'ERROR: ' + error.message : stdout));
         
         if (error) {
           resolve(null);
@@ -899,7 +925,7 @@ app.get('/api/devices/:id/info', async (req, res) => {
   }
 });
 
-app.get('/api/devices/:id/scan/:tuner', async (req, res) => {
+app.get('/api/devices/:id/scan/:tuner', scanLimiter, async (req, res) => {
   try {
     const { id, tuner } = req.params;
     const channelMap = validate.channelMap(req.query.channelMap === undefined ? 'us-bcast' : req.query.channelMap);

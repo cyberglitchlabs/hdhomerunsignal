@@ -16,6 +16,7 @@ const CHANNEL_MAPS = new Set([
 const MAX_TUNER = 7;
 const MAX_PLPS = 64;
 const MAX_NAME_LENGTH = 64;
+const MAX_LOG_LENGTH = 1000;
 
 // Device ID (e.g. 1080ABCD), IPv4 address or hostname. Must start with an
 // alphanumeric so it can never be parsed as a command-line option.
@@ -69,4 +70,15 @@ function displayName(value) {
   return value.replace(/[\x00-\x1f\x7f]/g, '').slice(0, MAX_NAME_LENGTH);
 }
 
-module.exports = { deviceHost, tuner, channelMap, channel, plps, digits, displayName };
+// Renders any value for a log line: line breaks are removed and other control
+// characters become spaces, so a value cannot forge extra log entries, and the
+// length is bounded.
+function logSafe(value) {
+  const text = String(value)
+    .replace(/\n|\r/g, '')
+    // eslint-disable-next-line no-control-regex
+    .replace(/[\x00-\x1f\x7f]/g, ' ');
+  return text.length > MAX_LOG_LENGTH ? `${text.slice(0, MAX_LOG_LENGTH)}…` : text;
+}
+
+module.exports = { deviceHost, tuner, channelMap, channel, plps, digits, displayName, logSafe };
