@@ -37,7 +37,7 @@ COPY backend/ ./
 COPY --from=frontend-build /app/frontend/build ./public
 
 # Application files stay root-owned and read-only to the runtime user.
-USER node
+USER 1000:1000
 
 EXPOSE 3000
 

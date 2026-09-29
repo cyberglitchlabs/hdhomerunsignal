@@ -1,0 +1,4 @@
+ignored:
+  # apt package versions are fixed by the digest-pinned base image; Dependabot
+  # bumps the digest, so pinning individual apt versions would only add churn.
+  - DL3008
