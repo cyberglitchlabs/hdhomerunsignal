@@ -60,6 +60,8 @@ import {
 import axios from 'axios';
 import io from 'socket.io-client';
 import AntennaMode from './AntennaMode';
+import SignalHistoryChart, { SERIES_BOTH } from './SignalHistoryChart';
+import { useSignalHistory } from '../hooks/useSignalHistory';
 
 const REGIONS = [
   { value: 'us', label: 'United States' },
@@ -314,7 +316,13 @@ function SignalBar({ value, stats }) {
 }
 
 // Get channel range for region
-function getChannelRange(region) {
+// Valid channel numbers for the CH field and the up/down buttons. Cable maps
+// use wider numbering than broadcast (values from libhdhomerun's channel tables):
+// US/CA cable, HRC and IRC run 2-158, and EU/AU cable uses the frequency in MHz
+// as the channel number (108-862).
+function getChannelRange(region, channelMap = '') {
+  if (channelMap === 'eu-cable' || channelMap === 'au-cable') return { min: 108, max: 862 };
+  if (/-(cable|hrc|irc)$/.test(channelMap)) return { min: 2, max: 158 };
   if (region === 'eu') return { min: 5, max: 60 }; // EU: VHF 5-12, UHF 21-60
   if (region === 'au') return { min: 6, max: 51 }; // AU: VHF 6-12, UHF 28-51
   return { min: 2, max: 36 };                      // US: VHF 2-13, UHF 14-36
@@ -336,6 +344,12 @@ function SignalMeter() {
   });
   const [selectedChannel, setSelectedChannel] = useState('');
   const [tunerStatus, setTunerStatus] = useState(null);
+  // Rolling signal/SNR history for the chart. Restarts with the channel (same key
+  // as the session start/peak markers) and only records readings with a lock.
+  const signalHistory = useSignalHistory(tunerStatus, {
+    resetKey: `${selectedDevice}|${selectedTuner}|${tunerStatus?.channel}`,
+    requireLock: true
+  });
   const [loading, setLoading] = useState(false);
   const [socket, setSocket] = useState(null);
   const [directChannel, setDirectChannel] = useState('');
@@ -733,7 +747,7 @@ function SignalMeter() {
     setL1Info(null);
     setIsAtsc3Channel(false);
 
-    const channelRange = getChannelRange(region);
+    const channelRange = getChannelRange(region, channelMap);
 
     // Use the tracked directChannel state or extract from tuner status as fallback
     let currentChannelNum = parseInt(directChannel) || channelRange.min;
@@ -769,7 +783,7 @@ function SignalMeter() {
     setL1Info(null);
     setIsAtsc3Channel(false);
 
-    const channelRange = getChannelRange(region);
+    const channelRange = getChannelRange(region, channelMap);
 
     // Use the tracked directChannel state or extract from tuner status as fallback
     let currentChannelNum = parseInt(directChannel) || channelRange.min;
@@ -951,13 +965,13 @@ function SignalMeter() {
                       variant="outlined"
                       size="small"
                       value={directChannel}
-                      onChange={(e) => setDirectChannel(e.target.value)}
+                      onChange={(e) => setDirectChannel(e.target.value.replace(/\D/g, ''))}
                       onKeyPress={(e) => {
                         if (e.key === 'Enter') {
                           tuneToDirectChannel(directChannel);
                         }
                       }}
-                      placeholder={String(getChannelRange(region).max)}
+                      placeholder={String(getChannelRange(region, channelMap).max)}
                       sx={{
                         width: 60,
                         '& .MuiOutlinedInput-root': {
@@ -971,7 +985,7 @@ function SignalMeter() {
                         }
                       }}
                       disabled={!selectedDevice}
-                      inputProps={{ maxLength: 2 }}
+                      inputProps={{ maxLength: String(getChannelRange(region, channelMap).max).length, inputMode: 'numeric', pattern: '[0-9]*' }}
                     />
                     <Button variant="contained" onClick={() => tuneToDirectChannel(directChannel)} disabled={!selectedDevice || !directChannel} size="small" sx={{ minWidth: 'auto', px: 1 }}>
                       <TuneIcon />
@@ -994,6 +1008,7 @@ function SignalMeter() {
                   const statsKey = `${selectedDevice}|${selectedTuner}|${tunerStatus.channel}`;
                   const stats = signalStats?.key === statsKey ? signalStats : null;
                   return (
+                  <>
                   <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1, alignItems: 'center' }}>
                     <Box sx={{ flex: '1 1 120px', minWidth: 120 }}>
                       <Typography variant="body2" sx={{ fontSize: '0.75rem', mb: 0.5 }}>
@@ -1018,6 +1033,10 @@ function SignalMeter() {
                       <Typography variant="body1" sx={{ fontSize: '0.9rem', fontWeight: 500 }}>{formatDataRate(tunerStatus.bps)}</Typography>
                     </Box>
                   </Box>
+                  <Box sx={{ height: 180, mt: 1 }}>
+                    <SignalHistoryChart history={signalHistory} series={SERIES_BOTH} variant="detailed" />
+                  </Box>
+                  </>
                   );
                 })() : (
                   <Typography variant="body2" sx={{ textAlign: 'center', py: 1, color: 'text.secondary' }}>
