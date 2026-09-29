@@ -2,7 +2,7 @@
 
 A modern web application that replaces the discontinued HDHomeRun Signal Android app. This web app provides real-time signal monitoring, channel tuning, and device management for HDHomeRun devices in the United States, Canada, United Kingdom/EU and Australia.
 
-> **This is a fork** of [Petelombardo/hdhomerunsignal](https://github.com/Petelombardo/hdhomerunsignal), the original HDHomeRun Signal Monitor by Pete Lombardo, who deserves the credit for the app itself. This fork adds security hardening (input validation and a fix for a command-injection vulnerability, rate limiting, CORS and WebSocket origin checks), a hardened container image, CI with vulnerability and code scanning and signed images, and a Helm chart for Kubernetes. See the commit history for the details.
+> **This is a fork** of [Petelombardo/hdhomerunsignal](https://github.com/Petelombardo/hdhomerunsignal), the original HDHomeRun Signal Monitor by Pete Lombardo, who deserves the credit for the app itself. This fork adds a hardened container image, CI with vulnerability scanning and signed images, and a Helm chart for Kubernetes, along with some security hardening.
 
 ## Features
 
