@@ -102,6 +102,7 @@ class HDHomeRunController {
     this.activeDevice = null;
     this.activeTuner = 0;
     this.monitoringIntervals = new Map(); // Per-socket monitoring intervals
+    this.plpUnavailableLogged = new Set(); // Devices already reported as lacking PLP info
     this.deviceNameCache = new Map(); // Cache for device name lookups
     this.cacheTTL = 5 * 60 * 1000; // 5 minute TTL
     this.httpDiscoveryCache = null; // Cached HTTP API results; only refreshed on explicit user request
@@ -759,9 +760,13 @@ class HDHomeRunController {
   async getPlpInfo(deviceId, tuner = 0) {
     return new Promise((resolve, reject) => {
       hdhr([deviceId, 'get', `/tuner${tuner}/plpinfo`], (error, stdout) => {
-        console.log('PLP Info for %s tuner %s: %s', validate.logSafe(deviceId), validate.logSafe(tuner), validate.logSafe(error ? 'ERROR: ' + error.message : stdout));
-        
         if (error) {
+          // Devices without ATSC 3.0 (or older models) fail this query on every
+          // poll; say so once per device instead of on every poll.
+          if (!this.plpUnavailableLogged.has(deviceId)) {
+            this.plpUnavailableLogged.add(deviceId);
+            console.log('PLP info not available from %s (no ATSC 3.0 support?); not logging again', validate.logSafe(deviceId));
+          }
           resolve(null);
           return;
         }
@@ -895,6 +900,11 @@ class HDHomeRunController {
       clearInterval(this.monitoringIntervals.get(socketId));
       this.monitoringIntervals.delete(socketId);
     }
+  }
+
+  stopAllMonitoring() {
+    this.monitoringIntervals.forEach(intervalId => clearInterval(intervalId));
+    this.monitoringIntervals.clear();
   }
 }
 
@@ -1174,3 +1184,27 @@ const PORT = process.env.PORT || 3000;
 server.listen(PORT, '0.0.0.0', () => {
   console.log(`HDHomeRun Signal server running on port ${PORT}`);
 });
+
+// Node runs as PID 1 in a container, where signals without a handler are
+// ignored: without this, `docker stop` and pod termination wait out the full
+// grace period and then SIGKILL the process.
+const SHUTDOWN_TIMEOUT_MS = 5000;
+let shuttingDown = false;
+
+function shutdown(signal) {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  console.log('%s received, shutting down', signal);
+
+  // Force exit if open connections keep the server from closing in time.
+  setTimeout(() => {
+    console.error('Shutdown timed out, forcing exit');
+    process.exit(1);
+  }, SHUTDOWN_TIMEOUT_MS).unref();
+
+  hdhrController.stopAllMonitoring();
+  io.close(() => process.exit(0));
+  server.closeIdleConnections();
+}
+
+['SIGTERM', 'SIGINT'].forEach(signal => process.on(signal, () => shutdown(signal)));
