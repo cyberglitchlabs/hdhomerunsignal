@@ -1,22 +1,62 @@
 const express = require('express');
 const { createServer } = require('http');
 const { Server } = require('socket.io');
-const { exec } = require('child_process');
+const { execFile } = require('child_process');
 const https = require('https');
 const path = require('path');
-const cors = require('cors');
+const validate = require('./validate');
+
+// hdhomerun_config is always run without a shell: arguments are passed as an
+// array, so request-derived values can never be interpreted as shell syntax.
+function hdhr(args, options, callback) {
+  if (typeof options === 'function') {
+    callback = options;
+    options = {};
+  }
+  return execFile('hdhomerun_config', args, options, callback);
+}
+
+// The frontend is served by this server, so cross-origin access is off unless
+// origins are explicitly allowed (comma-separated) via HDHR_ALLOWED_ORIGINS.
+const allowedOrigins = new Set(
+  (process.env.HDHR_ALLOWED_ORIGINS || '').split(',').map(o => o.trim()).filter(Boolean)
+);
+
+// Browsers do not enforce CORS on WebSockets, so check Origin ourselves:
+// no Origin (non-browser client), same host, or an allowlisted origin.
+function isOriginAllowed(origin, host) {
+  if (!origin) return true;
+  if (allowedOrigins.has(origin)) return true;
+  try {
+    return new URL(origin).host === host;
+  } catch (e) {
+    return false;
+  }
+}
 
 const app = express();
 const server = createServer(app);
 const io = new Server(server, {
-  cors: {
-    origin: "*",
-    methods: ["GET", "POST"]
+  allowRequest: (req, callback) => {
+    callback(null, isOriginAllowed(req.headers.origin, req.headers.host));
   }
 });
 
-app.use(cors());
-app.use(express.json());
+app.disable('x-powered-by');
+app.use((req, res, next) => {
+  const origin = req.headers.origin;
+  if (origin && allowedOrigins.has(origin)) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+    res.setHeader('Vary', 'Origin');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+    if (req.method === 'OPTIONS') return res.sendStatus(204);
+  } else if (origin && !isOriginAllowed(origin, req.headers.host) && req.path.startsWith('/api/')) {
+    return res.status(403).json({ error: 'Origin not allowed' });
+  }
+  next();
+});
+app.use(express.json({ limit: '10kb' }));
 app.use(express.static(path.join(__dirname, 'public')));
 
 class HDHomeRunController {
@@ -54,7 +94,11 @@ class HDHomeRunController {
 
     // Add manually specified devices
     if (manualDevices) {
-      const manualHosts = manualDevices.split(',').map(h => h.trim()).filter(h => h);
+      const manualHosts = manualDevices.split(',').map(h => h.trim()).filter(h => h).filter(h => {
+        if (validate.deviceHost(h)) return true;
+        console.error(`Ignoring invalid HDHOMERUN_DEVICES entry: ${JSON.stringify(h)}`);
+        return false;
+      });
       console.log(`Adding ${manualHosts.length} manual device(s):`, manualHosts);
 
       const manualResults = await Promise.all(
@@ -102,7 +146,7 @@ class HDHomeRunController {
 
   async udpDiscoverDevices() {
     return new Promise((resolve) => {
-      exec('hdhomerun_config discover', { timeout: 5000 }, (error, stdout, stderr) => {
+      hdhr(['discover'], { timeout: 5000 }, (error, stdout, stderr) => {
         if (error) {
           console.error('UDP discovery error:', error.message);
           resolve([]);
@@ -186,7 +230,7 @@ class HDHomeRunController {
 
   async getDeviceModel(host) {
     return new Promise((resolve) => {
-      exec(`hdhomerun_config ${host} get /sys/hwmodel`, { timeout: 5000 }, (error, stdout) => {
+      hdhr([host, 'get', '/sys/hwmodel'], { timeout: 5000 }, (error, stdout) => {
         if (error) {
           resolve(null);
           return;
@@ -206,7 +250,7 @@ class HDHomeRunController {
 
     return new Promise((resolve) => {
       // Query the device to verify it's reachable and get model info for the name
-      exec(`hdhomerun_config ${host} get /sys/hwmodel`, { timeout: 5000 }, (error, stdout) => {
+      hdhr([host, 'get', '/sys/hwmodel'], { timeout: 5000 }, (error, stdout) => {
         if (error) {
           console.error(`Failed to query device at ${host}:`, error.message);
           // Return offline device instead of null so UI can show it grayed out
@@ -224,7 +268,7 @@ class HDHomeRunController {
         const model = stdout.trim() || 'Unknown';
 
         // Try to get the device ID for display purposes
-        exec(`hdhomerun_config discover ${host}`, { timeout: 5000 }, (discoverErr, discoverOut) => {
+        hdhr(['discover', host], { timeout: 5000 }, (discoverErr, discoverOut) => {
           const match = discoverOut && discoverOut.match(/hdhomerun device ([A-F0-9-]+) found at ([0-9.]+)/);
           const deviceId = match ? match[1] : null;
 
@@ -251,7 +295,7 @@ class HDHomeRunController {
   async getDeviceInfo(deviceId) {
     return new Promise((resolve, reject) => {
       // Get both model and tuner count
-      exec(`hdhomerun_config ${deviceId} get /sys/model`, (error, stdout) => {
+      hdhr([deviceId, 'get', '/sys/model'], (error, stdout) => {
         if (error) {
           resolve({ model: 'Unknown', tuners: 2, atsc3Support: false });
           return;
@@ -285,7 +329,7 @@ class HDHomeRunController {
       // Check tuners 0-7 to see which ones exist
       const checkTuner = (tunerNum) => {
         return new Promise((resolveCheck) => {
-          exec(`hdhomerun_config ${deviceId} get /tuner${tunerNum}/status`, (error, stdout) => {
+          hdhr([deviceId, 'get', `/tuner${tunerNum}/status`], (error, stdout) => {
             // If no error, tuner exists (even if status is 'none')
             resolveCheck(!error);
           });
@@ -306,9 +350,7 @@ class HDHomeRunController {
 
   async scanChannels(deviceId, tuner = 0, channelMap = 'us-bcast') {
     return new Promise((resolve, reject) => {
-      const command = `hdhomerun_config ${deviceId} scan /tuner${tuner} ${channelMap}`;
-      
-      exec(command, { timeout: 60000 }, (error, stdout, stderr) => {
+      hdhr([deviceId, 'scan', `/tuner${tuner}`, channelMap], { timeout: 60000 }, (error, stdout, stderr) => {
         if (error) {
           console.error('Scan error:', error);
           resolve([]);
@@ -438,7 +480,7 @@ class HDHomeRunController {
 
   async getStatusCommand(deviceId, tuner, command) {
     return new Promise((resolve) => {
-      exec(`hdhomerun_config ${deviceId} get /tuner${tuner}/${command}`, (error, stdout) => {
+      hdhr([deviceId, 'get', `/tuner${tuner}/${command}`], (error, stdout) => {
         if (error) {
           resolve(null);
         } else {
@@ -506,7 +548,7 @@ class HDHomeRunController {
 
   async getDbValue(deviceId, tuner, command) {
     return new Promise((resolve) => {
-      exec(`hdhomerun_config ${deviceId} get /tuner${tuner}/${command}`, (error, stdout) => {
+      hdhr([deviceId, 'get', `/tuner${tuner}/${command}`], (error, stdout) => {
         if (error) {
           resolve(null);
         } else {
@@ -518,7 +560,7 @@ class HDHomeRunController {
 
   async getCurrentProgram(deviceId, tuner = 0) {
     return new Promise((resolve, reject) => {
-      exec(`hdhomerun_config ${deviceId} get /tuner${tuner}/program`, (error, stdout) => {
+      hdhr([deviceId, 'get', `/tuner${tuner}/program`], (error, stdout) => {
         if (error) {
           resolve(null);
           return;
@@ -545,7 +587,7 @@ class HDHomeRunController {
 
       let attempt = 0;
       const tryGetPrograms = () => {
-        exec(`hdhomerun_config ${deviceId} get /tuner${tuner}/streaminfo`, (error, stdout) => {
+        hdhr([deviceId, 'get', `/tuner${tuner}/streaminfo`], (error, stdout) => {
           if (error) {
             if (attempt < maxRetries) {
               attempt++;
@@ -613,17 +655,8 @@ class HDHomeRunController {
 
   async setChannel(deviceId, tuner, channel) {
     return new Promise((resolve, reject) => {
-      // Handle ATSC 3.0 format: atsc3:27:0+1+2 or regular format: 27
-      let command;
-      if (channel.includes('atsc3:')) {
-        command = `hdhomerun_config ${deviceId} set /tuner${tuner}/channel ${channel}`;
-      } else {
-        // For regular channels, check if we should use ATSC 3.0 format
-        // This could be enhanced to auto-detect based on device capabilities
-        command = `hdhomerun_config ${deviceId} set /tuner${tuner}/channel ${channel}`;
-      }
-      
-      exec(command, (error, stdout) => {
+      // ATSC 3.0 (atsc3:27:0+1+2) and regular channels use the same set command
+      hdhr([deviceId, 'set', `/tuner${tuner}/channel`, channel], (error, stdout) => {
         if (error) {
           reject(error);
           return;
@@ -640,7 +673,7 @@ class HDHomeRunController {
         channelStr += `:${plps.join('+')}`;
       }
       
-      exec(`hdhomerun_config ${deviceId} set /tuner${tuner}/channel ${channelStr}`, (error, stdout) => {
+      hdhr([deviceId, 'set', `/tuner${tuner}/channel`, channelStr], (error, stdout) => {
         if (error) {
           reject(error);
           return;
@@ -652,7 +685,7 @@ class HDHomeRunController {
 
   async incrementChannel(deviceId, tuner) {
     return new Promise((resolve, reject) => {
-      exec(`hdhomerun_config ${deviceId} set /tuner${tuner}/channel +`, (error, stdout) => {
+      hdhr([deviceId, 'set', `/tuner${tuner}/channel`, '+'], (error, stdout) => {
         if (error) {
           reject(error);
           return;
@@ -664,7 +697,7 @@ class HDHomeRunController {
 
   async decrementChannel(deviceId, tuner) {
     return new Promise((resolve, reject) => {
-      exec(`hdhomerun_config ${deviceId} set /tuner${tuner}/channel -`, (error, stdout) => {
+      hdhr([deviceId, 'set', `/tuner${tuner}/channel`, '-'], (error, stdout) => {
         if (error) {
           reject(error);
           return;
@@ -676,7 +709,7 @@ class HDHomeRunController {
 
   async clearTuner(deviceId, tuner) {
     return new Promise((resolve, reject) => {
-      exec(`hdhomerun_config ${deviceId} set /tuner${tuner}/channel none`, (error, stdout) => {
+      hdhr([deviceId, 'set', `/tuner${tuner}/channel`, 'none'], (error, stdout) => {
         if (error) {
           reject(error);
           return;
@@ -688,7 +721,7 @@ class HDHomeRunController {
 
   async getPlpInfo(deviceId, tuner = 0) {
     return new Promise((resolve, reject) => {
-      exec(`hdhomerun_config ${deviceId} get /tuner${tuner}/plpinfo`, (error, stdout) => {
+      hdhr([deviceId, 'get', `/tuner${tuner}/plpinfo`], (error, stdout) => {
         console.log(`PLP Info for ${deviceId} tuner ${tuner}:`, error ? 'ERROR: ' + error.message : stdout);
         
         if (error) {
@@ -734,7 +767,7 @@ class HDHomeRunController {
 
   async getL1Info(deviceId, tuner = 0) {
     return new Promise((resolve, reject) => {
-      exec(`hdhomerun_config ${deviceId} get /tuner${tuner}/l1info`, (error, stdout) => {
+      hdhr([deviceId, 'get', `/tuner${tuner}/l1info`], (error, stdout) => {
         if (error) {
           resolve(null);
           return;
@@ -831,6 +864,22 @@ class HDHomeRunController {
 const hdhrController = new HDHomeRunController();
 
 // API Routes
+// Every :id and :tuner is validated once here, before any handler runs, and
+// replaced with its normalised value.
+app.param('id', (req, res, next, value) => {
+  const id = validate.deviceHost(value);
+  if (!id) return res.status(400).json({ error: 'Invalid device id' });
+  req.params.id = id;
+  next();
+});
+
+app.param('tuner', (req, res, next, value) => {
+  const t = validate.tuner(value);
+  if (t === null) return res.status(400).json({ error: 'Invalid tuner' });
+  req.params.tuner = t;
+  next();
+});
+
 app.get('/api/devices', async (req, res) => {
   try {
     const forceRefresh = req.query.force === 'true';
@@ -853,7 +902,11 @@ app.get('/api/devices/:id/info', async (req, res) => {
 app.get('/api/devices/:id/scan/:tuner', async (req, res) => {
   try {
     const { id, tuner } = req.params;
-    const { channelMap = 'us-bcast' } = req.query;
+    const channelMap = validate.channelMap(req.query.channelMap === undefined ? 'us-bcast' : req.query.channelMap);
+    if (!channelMap) {
+      res.status(400).json({ error: 'Invalid channelMap' });
+      return;
+    }
     const channels = await hdhrController.scanChannels(id, tuner, channelMap);
     res.json(channels);
   } catch (error) {
@@ -884,7 +937,11 @@ app.get('/api/devices/:id/tuner/:tuner/programs', async (req, res) => {
 app.post('/api/devices/:id/tuner/:tuner/channel', async (req, res) => {
   try {
     const { id, tuner } = req.params;
-    const { channel } = req.body;
+    const channel = validate.channel(req.body && req.body.channel);
+    if (!channel) {
+      res.status(400).json({ error: 'Invalid channel' });
+      return;
+    }
     const result = await hdhrController.setChannel(id, tuner, channel);
     res.json({ success: true, result });
   } catch (error) {
@@ -945,7 +1002,13 @@ app.get('/api/devices/:id/tuner/:tuner/l1info', async (req, res) => {
 app.post('/api/devices/:id/tuner/:tuner/atsc3', async (req, res) => {
   try {
     const { id, tuner } = req.params;
-    const { channel, plps } = req.body;
+    const body = req.body || {};
+    const channel = validate.digits(String(body.channel));
+    const plps = validate.plps(body.plps);
+    if (!channel || !plps) {
+      res.status(400).json({ error: 'Invalid channel or plps' });
+      return;
+    }
     const result = await hdhrController.setAtsc3Channel(id, tuner, channel, plps);
     res.json({ success: true, result });
   } catch (error) {
@@ -958,10 +1021,11 @@ app.post('/api/devices/:id/tuner/:tuner/atsc3', async (req, res) => {
 app.get('/api/devices/:id/stream/url', async (req, res) => {
   try {
     const { id } = req.params;
-    const { ch, program } = req.query;
+    const ch = validate.digits(req.query.ch);
+    const program = validate.digits(req.query.program);
 
     if (!ch || !program) {
-      res.status(400).json({ error: 'Missing ch or program query parameter' });
+      res.status(400).json({ error: 'Missing or invalid ch or program query parameter' });
       return;
     }
 
@@ -983,10 +1047,12 @@ app.get('/api/devices/:id/stream/url', async (req, res) => {
 app.get('/api/devices/:id/stream/play.m3u', async (req, res) => {
   try {
     const { id } = req.params;
-    const { ch, program, name } = req.query;
+    const ch = validate.digits(req.query.ch);
+    const program = validate.digits(req.query.program);
+    const name = validate.displayName(req.query.name);
 
     if (!ch || !program) {
-      res.status(400).json({ error: 'Missing ch or program query parameter' });
+      res.status(400).json({ error: 'Missing or invalid ch or program query parameter' });
       return;
     }
 
@@ -1019,13 +1085,18 @@ ${streamUrl}
 io.on('connection', (socket) => {
   console.log('Client connected:', socket.id);
 
-  socket.on('start-monitoring', ({ deviceId, tuner }) => {
+  socket.on('start-monitoring', (payload) => {
+    const deviceId = validate.deviceHost(payload && payload.deviceId);
+    const tuner = validate.tuner(payload && payload.tuner);
+    if (!deviceId || tuner === null) return;
     console.log(`Starting monitoring for device ${deviceId}, tuner ${tuner}`);
     hdhrController.startMonitoring(socket, deviceId, tuner);
   });
 
-  socket.on('start-antenna-mode', ({ deviceId, tunerCount }) => {
-    console.log(`Starting antenna mode for device ${deviceId} with ${tunerCount} tuners`);
+  socket.on('start-antenna-mode', (payload) => {
+    const deviceId = validate.deviceHost(payload && payload.deviceId);
+    const tunerCount = Number(payload && payload.tunerCount);
+    if (!deviceId || !Number.isInteger(tunerCount) || tunerCount < 1 || tunerCount > 8) return;
     hdhrController.startAntennaMode(socket, deviceId, tunerCount);
   });
 
