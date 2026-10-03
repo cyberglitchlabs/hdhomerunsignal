@@ -38,9 +38,9 @@ export function useMonitoring({ socket, selectedDevice, selectedTuner, antennaMo
     onLeaveRef.current = onLeaveAntennaMode;
   });
 
-  // Antenna mode only needs the tuner count, so depend on that rather than on
-  // the whole deviceInfo object.
-  const tunerCount = deviceInfo?.tuners;
+  // Only antenna mode needs the tuner count, so normal monitoring must not
+  // restart when the device info arrives.
+  const tunerCount = antennaMode ? deviceInfo?.tuners : undefined;
   // The selected tuner is irrelevant in antenna mode, so it must not restart it.
   const tuner = antennaMode ? null : selectedTuner;
 

@@ -85,6 +85,9 @@ export function useChannelControl({ selectedDevice, selectedTuner, region, chann
     try {
       // Cancel any pending program fetch from previous channel change
       programFetchGate.cancel();
+      // Started before the POST so a Stop, switch or newer tune while it is in
+      // flight also drops the fetches below
+      const isCurrent = programFetchGate.start();
 
       // Clear old data immediately when changing channels
       setCurrentChannelPrograms([]);
@@ -94,12 +97,9 @@ export function useChannelControl({ selectedDevice, selectedTuner, region, chann
       await axios.post(`/api/devices/${selectedDevice}/tuner/${selectedTuner}/channel`, {
         channel
       });
+      if (!isCurrent()) return;
 
       // Don't clear directChannel - it will be updated by the effect when tuner status updates
-
-      // Fetches below are dropped if the user tunes again, switches tuner or
-      // device, presses Stop or leaves the page before they finish
-      const isCurrent = programFetchGate.start();
 
       // Wait for tuner to lock with progressive delays
       const waitAndGetPrograms = async () => {
@@ -163,7 +163,6 @@ export function useChannelControl({ selectedDevice, selectedTuner, region, chann
     directChannel,
     setDirectChannel,
     currentChannelPrograms,
-    resetChannelData,
     tuneToDirectChannel,
     incrementChannel,
     decrementChannel,
