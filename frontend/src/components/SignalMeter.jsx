@@ -1,945 +1,101 @@
-import React, { useState, useEffect } from 'react';
-import {
-  Box,
-  Card,
-  CardContent,
-  Typography,
-  Button,
-  Select,
-  MenuItem,
-  Menu,
-  FormControl,
-  InputLabel,
-  LinearProgress,
-  Grid,
-  Chip,
-  Paper,
-  IconButton,
-  Dialog,
-  DialogTitle,
-  List,
-  ListItem,
-  ListItemText,
-  ListItemButton,
-  ListItemIcon,
-  CircularProgress,
-  Accordion,
-  AccordionSummary,
-  AccordionDetails,
-  Divider,
-  Badge,
-  TextField,
-  Table,
-  TableBody,
-  TableCell,
-  TableContainer,
-  TableHead,
-  TableRow,
-  ToggleButton,
-  ToggleButtonGroup,
-  Tooltip
-} from '@mui/material';
-import {
-  Refresh as RefreshIcon,
-  Settings as SettingsIcon,
-  KeyboardArrowLeft,
-  KeyboardArrowRight,
-  Radio as TuneIcon,
-  SkipPrevious,
-  SkipNext,
-  Input as InputIcon,
-  ExpandMore as ExpandMoreIcon,
-  Tv as TvIcon,
-  Stop as StopIcon,
-  PowerOff as PowerOffIcon,
-  GetApp as InstallIcon,
-  Satellite as AntennaIcon,
-  PlayArrow as PlayIcon,
-  ContentCopy as CopyIcon
-} from '@mui/icons-material';
-import axios from 'axios';
-import io from 'socket.io-client';
+import { useState } from 'react';
+import { Box, Grid } from '@mui/material';
 import AntennaMode from './AntennaMode';
-import SignalHistoryChart, { SERIES_BOTH } from './SignalHistoryChart';
+import Atsc3Panels from './signal/Atsc3Panels';
+import ChannelControls from './signal/ChannelControls';
+import DeviceBar from './signal/DeviceBar';
+import PanelCard from './signal/PanelCard';
+import ProgramTable from './signal/ProgramTable';
+import StreamContextMenu from './signal/StreamContextMenu';
+import TunerMeters from './signal/TunerMeters';
+import TunerSettings from './signal/TunerSettings';
+import { useChannelControl } from '../hooks/useChannelControl';
+import { useDevices } from '../hooks/useDevices';
+import { useInstallPrompt } from '../hooks/useInstallPrompt';
+import { useMonitoring } from '../hooks/useMonitoring';
+import { useRegion } from '../hooks/useRegion';
 import { useSignalHistory } from '../hooks/useSignalHistory';
-
-const REGIONS = [
-  { value: 'us', label: 'United States' },
-  { value: 'ca', label: 'Canada' },
-  { value: 'eu', label: 'United Kingdom / EU' },
-  { value: 'au', label: 'Australia' }
-];
-
-const CHANNEL_MAPS = {
-  us: [
-    { value: 'us-bcast', label: 'US Broadcast' },
-    { value: 'us-cable', label: 'US Cable' },
-    { value: 'us-hrc', label: 'US HRC' },
-    { value: 'us-irc', label: 'US IRC' }
-  ],
-  ca: [
-    { value: 'ca-bcast', label: 'CA Broadcast' },
-    { value: 'ca-cable', label: 'CA Cable' },
-    { value: 'ca-hrc', label: 'CA HRC' },
-    { value: 'ca-irc', label: 'CA IRC' }
-  ],
-  eu: [
-    { value: 'eu-bcast', label: 'UK/EU Broadcast' },
-    { value: 'eu-cable', label: 'UK/EU Cable' }
-  ],
-  au: [
-    { value: 'au-bcast', label: 'AU Broadcast' },
-    { value: 'au-cable', label: 'AU Cable' }
-  ]
-};
-
-const DEFAULT_CHANNEL_MAP = {
-  us: 'us-bcast',
-  ca: 'ca-bcast',
-  eu: 'eu-bcast',
-  au: 'au-bcast'
-};
-
-// Convert frequency (in Hz) to broadcast channel number
-function frequencyToChannel(freqHz, region = 'us') {
-  const freqMhz = freqHz / 1000000;
-
-  if (region === 'eu') {
-    // UK/EU DVB-T/T2 frequencies
-    // Band III (VHF): 174-230 MHz → channels 5-12
-    if (freqMhz >= 174 && freqMhz <= 230) {
-      // Channel 5: 177.5 MHz center, then +7 MHz for each channel
-      const channel = Math.round((freqMhz - 177.5) / 7) + 5;
-      return Math.max(5, Math.min(12, channel));
-    }
-
-    // Band IV/V (UHF): 470-790 MHz → channels 21-60
-    // Note: Post-700MHz clearance, many regions only use 21-48
-    if (freqMhz >= 470 && freqMhz <= 790) {
-      // Channel 21: 474 MHz center, then +8 MHz for each channel
-      const channel = Math.round((freqMhz - 474) / 8) + 21;
-      return Math.max(21, Math.min(60, channel));
-    }
-
-    return null; // Unknown frequency range
-  }
-
-  if (region === 'au') {
-    // Australian DVB-T frequencies (7 MHz raster)
-    // Band III (VHF): channels 6-12 with 9A (205.5 MHz) between 9 and 10
-    if (freqMhz >= 174 && freqMhz <= 230) {
-      const slot = Math.round((freqMhz - 177.5) / 7); // 0 = ch6 ... 4 = 9A ... 7 = ch12
-      if (slot === 4) return '9A';
-      const channel = slot < 4 ? slot + 6 : slot + 5;
-      return Math.max(6, Math.min(12, channel));
-    }
-
-    // Band IV/V (UHF): channels 28-51 (post digital dividend, 526-694 MHz)
-    if (freqMhz >= 526 && freqMhz <= 694) {
-      // Channel 28: 529.5 MHz center, then +7 MHz for each channel
-      const channel = Math.round((freqMhz - 529.5) / 7) + 28;
-      return Math.max(28, Math.min(51, channel));
-    }
-
-    return null; // Unknown frequency range
-  }
-
-  // US ATSC frequencies
-  // VHF Low (channels 2-6): 54-88 MHz
-  if (freqMhz >= 54 && freqMhz <= 88) {
-    // Channel 2: 57 MHz center, Channel 3: 63, Channel 4: 69, Channel 5: 79, Channel 6: 85
-    const vhfLowChannels = [
-      { ch: 2, freq: 57 }, { ch: 3, freq: 63 }, { ch: 4, freq: 69 },
-      { ch: 5, freq: 79 }, { ch: 6, freq: 85 }
-    ];
-    let closest = vhfLowChannels[0];
-    let minDiff = Math.abs(freqMhz - closest.freq);
-    for (const ch of vhfLowChannels) {
-      const diff = Math.abs(freqMhz - ch.freq);
-      if (diff < minDiff) {
-        minDiff = diff;
-        closest = ch;
-      }
-    }
-    return closest.ch;
-  }
-
-  // VHF High (channels 7-13): 174-216 MHz
-  if (freqMhz >= 174 && freqMhz <= 216) {
-    // Channel 7: 177 MHz center, then +6 MHz for each channel
-    const channel = Math.round((freqMhz - 177) / 6) + 7;
-    return Math.max(7, Math.min(13, channel));
-  }
-
-  // UHF (channels 14-36): 470-608 MHz (post-repack)
-  if (freqMhz >= 470 && freqMhz <= 608) {
-    // Channel 14: 473 MHz center, then +6 MHz for each channel
-    const channel = Math.round((freqMhz - 473) / 6) + 14;
-    return Math.max(14, Math.min(36, channel));
-  }
-
-  return null; // Unknown frequency range
-}
-
-// Convert broadcast channel number to center frequency (in Hz)
-function channelToFrequency(channel, region = 'us') {
-  if (region === 'au' && String(channel).toUpperCase() === '9A') {
-    return 205.5 * 1000000;
-  }
-
-  const ch = parseInt(channel, 10);
-  if (isNaN(ch)) return null;
-
-  if (region === 'eu') {
-    // Band III (VHF): channels 5-12
-    if (ch >= 5 && ch <= 12) {
-      return ((ch - 5) * 7 + 177.5) * 1000000;
-    }
-    // Band IV/V (UHF): channels 21-60
-    if (ch >= 21 && ch <= 60) {
-      return ((ch - 21) * 8 + 474) * 1000000;
-    }
-    return null;
-  }
-
-  if (region === 'au') {
-    // Band III (VHF): channels 6-9, then 10-12 shifted up past 9A
-    if (ch >= 6 && ch <= 9) {
-      return ((ch - 6) * 7 + 177.5) * 1000000;
-    }
-    if (ch >= 10 && ch <= 12) {
-      return ((ch - 10) * 7 + 212.5) * 1000000;
-    }
-    // Band IV/V (UHF): channels 28-51
-    if (ch >= 28 && ch <= 51) {
-      return ((ch - 28) * 7 + 529.5) * 1000000;
-    }
-    return null;
-  }
-
-  // US ATSC frequencies
-  // VHF Low (channels 2-6)
-  const vhfLow = { 2: 57, 3: 63, 4: 69, 5: 79, 6: 85 };
-  if (vhfLow[ch]) return vhfLow[ch] * 1000000;
-
-  // VHF High (channels 7-13): 177 MHz + 6 MHz per channel
-  if (ch >= 7 && ch <= 13) {
-    return ((ch - 7) * 6 + 177) * 1000000;
-  }
-
-  // UHF (channels 14-36): 473 MHz + 6 MHz per channel
-  if (ch >= 14 && ch <= 36) {
-    return ((ch - 14) * 6 + 473) * 1000000;
-  }
-
-  return null;
-}
-
-function getSignalColor(value) {
-  if (value >= 80) return '#4CAF50';
-  if (value >= 60) return '#FF9800';
-  return '#F44336';
-}
-
-// Fold one status reading into a metric's session stats. Each metric latches its
-// own baseline on its first non-zero reading: the device reports lock=none with
-// 0/0/0 while it is still acquiring, and the three values do not come up together,
-// so a shared baseline pins whichever metric arrives last at 0.
-function trackMetric(prev, raw) {
-  const value = raw || 0;
-  if (!prev) return { initial: value > 0 ? value : null, max: value };
-  const initial = prev.initial === null && value > 0 ? value : prev.initial;
-  if (initial === prev.initial && value <= prev.max) return prev;
-  return { initial, max: Math.max(prev.max, value) };
-}
-
-// Signal bar with optional session markers: a dimmed high-water fill behind the
-// live bar, and a caret under the track showing the reading when we first locked
-// this channel. Together they show at a glance whether an antenna nudge helped.
-function SignalBar({ value, stats }) {
-  const current = value || 0;
-  const peak = stats ? Math.max(stats.max, current) : null;
-  const initial = stats && stats.initial !== null ? stats.initial : null;
-  const tip = stats
-    ? `Now ${current}% \u00b7 Start ${initial === null ? '\u2014' : initial + '%'} \u00b7 Peak ${peak}%`
-    : '';
-
-  return (
-    <Tooltip title={tip} placement="top" arrow enterDelay={200} disableInteractive>
-    <Box>
-      <Box sx={{ position: 'relative', height: 8 }}>
-        <Box sx={{ position: 'absolute', inset: 0, borderRadius: 4, backgroundColor: 'rgba(255,255,255,0.1)' }} />
-        {peak !== null && (
-          <Box sx={{
-            position: 'absolute',
-            left: 0,
-            top: 0,
-            bottom: 0,
-            width: `${peak}%`,
-            borderRadius: 4,
-            backgroundColor: getSignalColor(peak),
-            opacity: 0.3
-          }} />
-        )}
-        <LinearProgress
-          variant="determinate"
-          value={current}
-          sx={{
-            position: 'absolute',
-            inset: 0,
-            height: 8,
-            borderRadius: 4,
-            backgroundColor: 'transparent',
-            '& .MuiLinearProgress-bar': { backgroundColor: getSignalColor(current) }
-          }}
-        />
-      </Box>
-      <Box sx={{ position: 'relative', height: 9 }}>
-        {initial !== null && (
-          <Box sx={{
-            position: 'absolute',
-            left: `${initial}%`,
-            transform: 'translateX(-50%)',
-            fontSize: '0.5rem',
-            lineHeight: 1,
-            color: 'text.secondary',
-            opacity: 0.65,
-            userSelect: 'none'
-          }}>
-            &#9650;
-          </Box>
-        )}
-      </Box>
-    </Box>
-    </Tooltip>
-  );
-}
-
-// Get channel range for region
-// Valid channel numbers for the CH field and the up/down buttons. Cable maps
-// use wider numbering than broadcast (values from libhdhomerun's channel tables):
-// US/CA cable, HRC and IRC run 2-158, and EU/AU cable uses the frequency in MHz
-// as the channel number (108-862).
-function getChannelRange(region, channelMap = '') {
-  if (channelMap === 'eu-cable' || channelMap === 'au-cable') return { min: 108, max: 862 };
-  if (/-(cable|hrc|irc)$/.test(channelMap)) return { min: 2, max: 158 };
-  if (region === 'eu') return { min: 5, max: 60 }; // EU: VHF 5-12, UHF 21-60
-  if (region === 'au') return { min: 6, max: 51 }; // AU: VHF 6-12, UHF 28-51
-  return { min: 2, max: 36 };                      // US: VHF 2-13, UHF 14-36
-}
+import { useSignalStats } from '../hooks/useSignalStats';
+import { useSocket } from '../hooks/useSocket';
+import { useTunerState } from '../hooks/useTunerState';
+import { getChannelRange } from '../utils/channels';
 
 function SignalMeter() {
-  // Load region from localStorage, default to 'us'
-  const [region, setRegion] = useState(() => {
-    return localStorage.getItem('hdhr-region') || 'us';
-  });
-
-  const [devices, setDevices] = useState([]);
-  const [selectedDevice, setSelectedDevice] = useState('');
-  const [deviceInfo, setDeviceInfo] = useState(null);
+  const { region, channelMap, setChannelMap, changeRegion } = useRegion();
+  const { devices, selectedDevice, setSelectedDevice, deviceInfo, loading, discoverDevices, getDeviceInfo } = useDevices();
   const [selectedTuner, setSelectedTuner] = useState(0);
-  const [channelMap, setChannelMap] = useState(() => {
-    // Set default channel map based on region
-    return DEFAULT_CHANNEL_MAP[region] || 'us-bcast';
-  });
-  const [selectedChannel, setSelectedChannel] = useState('');
-  const [tunerStatus, setTunerStatus] = useState(null);
+  const [antennaMode, setAntennaMode] = useState(false);
+  const [allTunersData, setAllTunersData] = useState([]);
+  const [contextMenu, setContextMenu] = useState(null); // { mouseX, mouseY, program }
+  const { showInstallButton, install } = useInstallPrompt();
+
+  const { tunerStatus, plpInfo, l1Info, isAtsc3Channel, handleTunerStatus, clearAtsc3Info } = useTunerState();
   // Rolling signal/SNR history for the chart. Restarts with the channel (same key
   // as the session start/peak markers) and only records readings with a lock.
   const signalHistory = useSignalHistory(tunerStatus, {
     resetKey: `${selectedDevice}|${selectedTuner}|${tunerStatus?.channel}`,
     requireLock: true
   });
-  const [loading, setLoading] = useState(false);
-  const [socket, setSocket] = useState(null);
-  const [directChannel, setDirectChannel] = useState('');
-  const [currentChannelPrograms, setCurrentChannelPrograms] = useState([]);
-  const [deferredPrompt, setDeferredPrompt] = useState(null);
-  const [showInstallButton, setShowInstallButton] = useState(false);
-  const [plpInfo, setPlpInfo] = useState(null);
-  const [l1Info, setL1Info] = useState(null);
-  const [isAtsc3Channel, setIsAtsc3Channel] = useState(false);
-  const [antennaMode, setAntennaMode] = useState(false);
-  const [allTunersData, setAllTunersData] = useState([]);
-  const [contextMenu, setContextMenu] = useState(null); // { mouseX, mouseY, program }
-  // Per-channel session stats: first locked reading and high-water mark for
-  // ss/snq/seq. Reset whenever the tuned channel (or device/tuner) changes.
-  const [signalStats, setSignalStats] = useState(null);
+  const signalStats = useSignalStats(tunerStatus, selectedDevice, selectedTuner);
 
-  // Refs to track current device/tuner/mode for reconnection
-  const selectedDeviceRef = React.useRef(selectedDevice);
-  const selectedTunerRef = React.useRef(selectedTuner);
-  const antennaModeRef = React.useRef(antennaMode);
-  const deviceInfoRef = React.useRef(deviceInfo);
-  const pendingProgramFetchRef = React.useRef(null);
+  const socket = useSocket({
+    onTunerStatus: handleTunerStatus,
+    onAntennaModeStatus: setAllTunersData,
+    monitorState: { selectedDevice, selectedTuner, antennaMode, deviceInfo }
+  });
+  useMonitoring({
+    socket,
+    selectedDevice,
+    selectedTuner,
+    antennaMode,
+    deviceInfo,
+    onLeaveAntennaMode: () => setAllTunersData([])
+  });
 
-  // Save region preference to localStorage
-  useEffect(() => {
-    localStorage.setItem('hdhr-region', region);
-  }, [region]);
+  const {
+    directChannel,
+    setDirectChannel,
+    currentChannelPrograms,
+    resetChannelData,
+    tuneToDirectChannel,
+    incrementChannel,
+    decrementChannel,
+    clearTuner
+  } = useChannelControl({ selectedDevice, selectedTuner, region, channelMap, tunerStatus, clearAtsc3Info });
 
-  // Keep refs in sync with state
-  React.useEffect(() => {
-    selectedDeviceRef.current = selectedDevice;
-  }, [selectedDevice]);
+  const handleDeviceChange = async (newDeviceId) => {
+    setSelectedDevice(newDeviceId);
 
-  React.useEffect(() => {
-    selectedTunerRef.current = selectedTuner;
-  }, [selectedTuner]);
+    // Clear old channel data when switching devices
+    resetChannelData();
 
-  React.useEffect(() => {
-    antennaModeRef.current = antennaMode;
-  }, [antennaMode]);
-
-  React.useEffect(() => {
-    deviceInfoRef.current = deviceInfo;
-  }, [deviceInfo]);
-
-  useEffect(() => {
-    discoverDevices();
-    const newSocket = io({
-      reconnection: true,
-      reconnectionAttempts: Infinity,
-      reconnectionDelay: 1000,
-      reconnectionDelayMax: 5000,
-      timeout: 20000
-    });
-    setSocket(newSocket);
-
-    newSocket.on('tuner-status', (status) => {
-      setTunerStatus(status);
-
-      // Auto-detect ATSC 3.0 based on presence of PLP data
-      const hasAtsc3Data = status.plpInfo && Object.keys(status.plpInfo).length > 0;
-      setIsAtsc3Channel(hasAtsc3Data);
-
-      if (status.plpInfo) {
-        setPlpInfo(status.plpInfo);
-      } else {
-        setPlpInfo(null);
-      }
-
-      if (status.l1Info) {
-        setL1Info(status.l1Info);
-      } else {
-        setL1Info(null);
-      }
-    });
-
-    newSocket.on('antenna-mode-status', (data) => {
-      setAllTunersData(data);
-    });
-
-    // Handle socket connection/reconnection
-    let hasConnectedOnce = false;
-
-    newSocket.on('connect', () => {
-      if (hasConnectedOnce) {
-        console.log('Socket reconnected - restarting monitoring');
-        // On reconnect, restart monitoring if we have a device selected
-        if (selectedDeviceRef.current) {
-          // Add small delay to ensure socket is fully ready
-          setTimeout(() => {
-            if (antennaModeRef.current) {
-              // Restart antenna mode
-              console.log('Emitting start-antenna-mode for device:', selectedDeviceRef.current, 'tuners:', deviceInfoRef.current?.tuners);
-              newSocket.emit('start-antenna-mode', {
-                deviceId: selectedDeviceRef.current,
-                tunerCount: deviceInfoRef.current?.tuners || 2
-              });
-            } else {
-              // Restart normal monitoring
-              console.log('Emitting start-monitoring for device:', selectedDeviceRef.current, 'tuner:', selectedTunerRef.current);
-              newSocket.emit('start-monitoring', {
-                deviceId: selectedDeviceRef.current,
-                tuner: selectedTunerRef.current
-              });
-            }
-          }, 100);
-        } else {
-          console.log('No device selected, skipping monitoring restart');
-        }
-      } else {
-        console.log('Socket connected (initial)');
-        hasConnectedOnce = true;
-        // Don't start monitoring here - let the useEffect handle it
-      }
-    });
-
-    newSocket.on('disconnect', (reason) => {
-      console.log('Socket disconnected:', reason);
-    });
-
-    newSocket.on('connect_error', (error) => {
-      console.log('Socket connection error:', error.message);
-    });
-
-    newSocket.on('reconnect_attempt', (attemptNumber) => {
-      console.log('Reconnection attempt:', attemptNumber);
-    });
-
-    newSocket.on('reconnect_error', (error) => {
-      console.log('Reconnection error:', error.message);
-    });
-
-    newSocket.on('reconnect_failed', () => {
-      console.log('Reconnection failed - gave up');
-    });
-
-    // PWA install prompt handling
-    const handleBeforeInstallPrompt = (e) => {
-      e.preventDefault();
-      setDeferredPrompt(e);
-      setShowInstallButton(true);
-    };
-
-    const handleAppInstalled = () => {
-      setShowInstallButton(false);
-      setDeferredPrompt(null);
-    };
-
-    // Check if already installed
-    if (window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone) {
-      setShowInstallButton(false);
-    } else {
-      setShowInstallButton(true);
-    }
-
-    window.addEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
-    window.addEventListener('appinstalled', handleAppInstalled);
-
-    return () => {
-      newSocket.close();
-      window.removeEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
-      window.removeEventListener('appinstalled', handleAppInstalled);
-    };
-  }, []);
-
-  useEffect(() => {
-    if (selectedDevice && socket) {
-      console.log('useEffect: Starting monitoring for device:', selectedDevice, 'tuner:', selectedTuner);
-      socket.emit('start-monitoring', {
-        deviceId: selectedDevice,
-        tuner: selectedTuner
-      });
-    }
-    return () => {
-      if (socket) {
-        console.log('useEffect cleanup: Stopping monitoring');
-        socket.emit('stop-monitoring');
-      }
-    };
-  }, [selectedDevice, selectedTuner, socket]);
-
-  // Update directChannel input field when tuner status changes
-  useEffect(() => {
-    if (tunerStatus?.channel) {
-      if (tunerStatus.channel === 'none') {
-        // Tuner is cleared/stopped
-        setDirectChannel('');
-        setCurrentChannelPrograms([]);
-      } else {
-        // Check if format includes frequency (e.g., "auto6t:605028615")
-        const freqMatch = tunerStatus.channel.match(/:(\d{8,})/);
-        if (freqMatch) {
-          // Has frequency - convert to channel number
-          const freqHz = parseInt(freqMatch[1]);
-          const channel = frequencyToChannel(freqHz, region);
-          if (channel) {
-            console.log(`Converted frequency ${freqHz} Hz to channel ${channel}`);
-            setDirectChannel(channel.toString());
-          }
-        } else {
-          // Standard format (e.g., "auto:4" -> "4", "13" -> "13")
-          const channelMatch = tunerStatus.channel.match(/(?:auto:)?(\d+)/);
-          if (channelMatch) {
-            setDirectChannel(channelMatch[1]);
-          }
-        }
-      }
-    }
-  }, [tunerStatus?.channel]);
-
-  // Auto-fetch programs when channel is already tuned on initial load or after tuner change
-  useEffect(() => {
-    if (tunerStatus?.lock &&
-        tunerStatus.channel &&
-        tunerStatus.channel !== 'none' &&
-        currentChannelPrograms.length === 0 &&
-        selectedDevice) {
-      // Channel is tuned but we don't have program info yet - fetch it
-      console.log('Auto-fetching programs for tuner', selectedTuner);
-      getCurrentChannelPrograms();
-    }
-  }, [tunerStatus?.lock, tunerStatus?.channel, selectedDevice, selectedTuner]);
-
-  // Clear all data when tuner changes
-  useEffect(() => {
-    console.log('Tuner changed to:', selectedTuner, '- clearing old channel data');
-    setCurrentChannelPrograms([]);
-    setPlpInfo(null);
-    setL1Info(null);
-    setIsAtsc3Channel(false);
-    setDirectChannel('');
-    // Note: monitoring will restart via the monitoring useEffect, and
-    // the auto-fetch useEffect will repopulate data for the new tuner
-  }, [selectedTuner]);
-
-  // Track start/peak signal values for the currently tuned channel
-  useEffect(() => {
-    const channel = tunerStatus?.channel;
-    if (!channel || channel === 'none') {
-      setSignalStats(null);
-      return;
-    }
-    // Hold onto the stats through a momentary loss of lock - dropping out while
-    // the antenna swings shouldn't wipe the reference points.
-    if (!tunerStatus.lock) return;
-
-    const key = `${selectedDevice}|${selectedTuner}|${channel}`;
-
-    setSignalStats((prev) => {
-      const base = prev && prev.key === key ? prev : null;
-      const ss = trackMetric(base?.ss, tunerStatus.ss);
-      const snq = trackMetric(base?.snq, tunerStatus.snq);
-      const seq = trackMetric(base?.seq, tunerStatus.seq);
-      // trackMetric hands back the same object when nothing moved, so this keeps
-      // the idle case from re-rendering three progress bars every status tick.
-      if (base && ss === base.ss && snq === base.snq && seq === base.seq) return base;
-      return { key, ss, snq, seq };
-    });
-  }, [tunerStatus, selectedDevice, selectedTuner]);
-
-  // Handle antenna mode switching
-  useEffect(() => {
-    if (!socket || !selectedDevice || !deviceInfo) return;
-
-    if (antennaMode) {
-      console.log('Switching to antenna mode');
-      socket.emit('stop-monitoring');
-      socket.emit('start-antenna-mode', {
-        deviceId: selectedDevice,
-        tunerCount: deviceInfo.tuners
-      });
-    } else {
-      console.log('Switching to normal mode');
-      socket.emit('stop-monitoring');
-      socket.emit('start-monitoring', {
-        deviceId: selectedDevice,
-        tuner: selectedTuner
-      });
-      setAllTunersData([]); // Clear antenna mode data
-    }
-  }, [antennaMode, selectedDevice, socket, deviceInfo, selectedTuner]);
-
-  const discoverDevices = async (force = false) => {
-    setLoading(true);
-    try {
-      const url = force ? '/api/devices?force=true' : '/api/devices';
-      const response = await axios.get(url);
-      setDevices(response.data);
-      // Auto-select first online device
-      const firstOnlineDevice = response.data.find(d => d.online !== false);
-      if (firstOnlineDevice) {
-        setSelectedDevice(firstOnlineDevice.id);
-        await getDeviceInfo(firstOnlineDevice.id);
-      } else if (response.data.length > 0) {
-        // All devices offline - clear selection
-        setSelectedDevice('');
-        setDeviceInfo(null);
-      }
-    } catch (error) {
-      console.error('Failed to discover devices:', error);
-    }
-    setLoading(false);
-  };
-
-  const getDeviceInfo = async (deviceId) => {
-    try {
-      const response = await axios.get(`/api/devices/${deviceId}/info`);
-      console.log('Device info received:', response.data);
-      setDeviceInfo(response.data);
-      return response.data;
-    } catch (error) {
-      console.error('Failed to get device info:', error);
-      return null;
+    // Get info for new device and adjust tuner if needed
+    const info = await getDeviceInfo(newDeviceId);
+    if (info && selectedTuner >= info.tuners) {
+      // Current tuner doesn't exist on new device - switch to highest tuner
+      setSelectedTuner(info.tuners - 1);
     }
   };
 
-
-
-  const tuneToDirectChannel = async (channel) => {
-    if (!selectedDevice || !channel) return;
-
-    try {
-      // Cancel any pending program fetch from previous channel change
-      if (pendingProgramFetchRef.current) {
-        pendingProgramFetchRef.current.cancelled = true;
-        pendingProgramFetchRef.current = null;
-      }
-
-      // Clear old data immediately when changing channels
-      setCurrentChannelPrograms([]);
-      setPlpInfo(null);
-      setL1Info(null);
-      setIsAtsc3Channel(false);
-
-      // Use regular tuning - let backend auto-detect ATSC 3.0
-      await axios.post(`/api/devices/${selectedDevice}/tuner/${selectedTuner}/channel`, {
-        channel
-      });
-
-      setSelectedChannel(channel);
-      // Don't clear directChannel - it will be updated by the useEffect when tuner status updates
-
-      // Create cancellation token for this fetch operation
-      const fetchToken = { cancelled: false };
-      pendingProgramFetchRef.current = fetchToken;
-
-      // Wait for tuner to lock with progressive delays
-      const waitAndGetPrograms = async () => {
-        // Initial wait
-        await new Promise(resolve => setTimeout(resolve, 2000));
-
-        // Check if this operation was cancelled
-        if (fetchToken.cancelled) return;
-
-        const firstResponse = await getCurrentChannelPrograms();
-
-        // Try again after longer delay for slow-locking channels
-        await new Promise(resolve => setTimeout(resolve, 4000));
-
-        // Check again if this operation was cancelled before updating state
-        if (fetchToken.cancelled) return;
-
-        const response = await axios.get(`/api/devices/${selectedDevice}/tuner/${selectedTuner}/programs`);
-        if (response.data.length > (firstResponse?.length || 0)) {
-          setCurrentChannelPrograms(response.data);
-        }
-      };
-
-      waitAndGetPrograms();
-    } catch (error) {
-      console.error('Failed to set channel:', error);
-    }
-  };
-
-  const getCurrentChannelPrograms = async () => {
-    if (!selectedDevice) return [];
-
-    try {
-      const response = await axios.get(`/api/devices/${selectedDevice}/tuner/${selectedTuner}/programs`);
-      setCurrentChannelPrograms(response.data);
-      return response.data;
-    } catch (error) {
-      console.error('Failed to get current channel programs:', error);
-      setCurrentChannelPrograms([]);
-      return [];
-    }
-  };
-
-  const incrementChannel = async () => {
-    if (!selectedDevice) return;
-
-    // Clear old data immediately
-    setCurrentChannelPrograms([]);
-    setPlpInfo(null);
-    setL1Info(null);
-    setIsAtsc3Channel(false);
-
-    const channelRange = getChannelRange(region, channelMap);
-
-    // Use the tracked directChannel state or extract from tuner status as fallback
-    let currentChannelNum = parseInt(directChannel) || channelRange.min;
-
-    // If directChannel is empty or invalid, try to extract from tuner status
-    if (!currentChannelNum && tunerStatus?.channel) {
-      // Check for frequency format first
-      const freqMatch = tunerStatus.channel.match(/:(\d{8,})/);
-      if (freqMatch) {
-        const freqHz = parseInt(freqMatch[1]);
-        currentChannelNum = frequencyToChannel(freqHz, region) || channelRange.min;
-      } else {
-        const channelMatch = tunerStatus.channel.match(/(?:auto:)?(\d+)/);
-        currentChannelNum = channelMatch ? parseInt(channelMatch[1]) : channelRange.min;
-      }
-    }
-
-    const nextChannel = Math.min(channelRange.max, currentChannelNum + 1);
-
-    try {
-      await tuneToDirectChannel(nextChannel.toString());
-    } catch (error) {
-      console.error('Failed to increment channel:', error);
-    }
-  };
-
-  const decrementChannel = async () => {
-    if (!selectedDevice) return;
-
-    // Clear old data immediately
-    setCurrentChannelPrograms([]);
-    setPlpInfo(null);
-    setL1Info(null);
-    setIsAtsc3Channel(false);
-
-    const channelRange = getChannelRange(region, channelMap);
-
-    // Use the tracked directChannel state or extract from tuner status as fallback
-    let currentChannelNum = parseInt(directChannel) || channelRange.min;
-
-    // If directChannel is empty or invalid, try to extract from tuner status
-    if (!currentChannelNum && tunerStatus?.channel) {
-      // Check for frequency format first
-      const freqMatch = tunerStatus.channel.match(/:(\d{8,})/);
-      if (freqMatch) {
-        const freqHz = parseInt(freqMatch[1]);
-        currentChannelNum = frequencyToChannel(freqHz, region) || channelRange.min;
-      } else {
-        const channelMatch = tunerStatus.channel.match(/(?:auto:)?(\d+)/);
-        currentChannelNum = channelMatch ? parseInt(channelMatch[1]) : channelRange.min;
-      }
-    }
-
-    const prevChannel = Math.max(channelRange.min, currentChannelNum - 1);
-
-    try {
-      await tuneToDirectChannel(prevChannel.toString());
-    } catch (error) {
-      console.error('Failed to decrement channel:', error);
-    }
-  };
-
-  const clearTuner = async () => {
-    if (!selectedDevice) return;
-    
-    try {
-      // Clear all data immediately
-      setDirectChannel('');
-      setCurrentChannelPrograms([]);
-      setPlpInfo(null);
-      setL1Info(null);
-      setIsAtsc3Channel(false);
-      
-      await axios.post(`/api/devices/${selectedDevice}/tuner/${selectedTuner}/clear`);
-    } catch (error) {
-      console.error('Failed to clear tuner:', error);
-    }
-  };
-
-  const handleInstallClick = async () => {
-    if (deferredPrompt) {
-      deferredPrompt.prompt();
-      const { outcome } = await deferredPrompt.userChoice;
-      console.log(`User response to the install prompt: ${outcome}`);
-      setDeferredPrompt(null);
-      setShowInstallButton(false);
-    }
-  };
-
-  const formatDataRate = (bps) => {
-    if (!bps) return '0.000 Mbps';
-    return (bps / 1000000).toFixed(3) + ' Mbps';
-  };
+  const showTunerPanels = !antennaMode && selectedDevice;
 
   return (
     <Box>
       <Grid container spacing={1}>
-        {/* Device Selection */}
-        <Grid item xs={12}>
-          <Card>
-            <CardContent sx={{ py: 1, '&:last-child': { pb: 1 } }}>
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
-                <FormControl sx={{ minWidth: 140 }} size="small">
-                  <InputLabel>Region</InputLabel>
-                  <Select
-                    value={region}
-                    label="Region"
-                    onChange={(e) => {
-                      const newRegion = e.target.value;
-                      setRegion(newRegion);
-                      // Reset channel map to default for new region
-                      setChannelMap(DEFAULT_CHANNEL_MAP[newRegion]);
-                    }}
-                  >
-                    {REGIONS.map((r) => (
-                      <MenuItem key={r.value} value={r.value}>
-                        {r.label}
-                      </MenuItem>
-                    ))}
-                  </Select>
-                </FormControl>
-                <FormControl sx={{ minWidth: 180, flex: 1 }} size="small">
-                  <InputLabel>Device</InputLabel>
-                  <Select
-                    value={selectedDevice}
-                    label="Device"
-                    onChange={async (e) => {
-                      const newDeviceId = e.target.value;
-                      setSelectedDevice(newDeviceId);
-
-                      // Clear old channel data when switching devices
-                      setCurrentChannelPrograms([]);
-                      setPlpInfo(null);
-                      setL1Info(null);
-                      setIsAtsc3Channel(false);
-                      setDirectChannel('');
-
-                      // Get info for new device and adjust tuner if needed
-                      const info = await getDeviceInfo(newDeviceId);
-                      if (info && selectedTuner >= info.tuners) {
-                        // Current tuner doesn't exist on new device - switch to highest tuner
-                        setSelectedTuner(info.tuners - 1);
-                      }
-                    }}
-                  >
-                    {devices.map((device) => (
-                      <MenuItem
-                        key={device.id}
-                        value={device.id}
-                        disabled={device.online === false}
-                        sx={device.online === false ? { color: 'text.disabled', fontStyle: 'italic' } : {}}
-                      >
-                        {device.name || device.id}{device.online === false ? ' (offline)' : ''}
-                      </MenuItem>
-                    ))}
-                  </Select>
-                </FormControl>
-                <Button
-                  variant="outlined"
-                  onClick={() => discoverDevices(true)}
-                  disabled={loading}
-                  sx={{ minWidth: 'auto', px: 1 }}
-                  size="small"
-                >
-                  <RefreshIcon />
-                </Button>
-                {deviceInfo && (
-                  <Button
-                    variant={antennaMode ? "contained" : "outlined"}
-                    onClick={() => setAntennaMode(!antennaMode)}
-                    sx={{ minWidth: 'auto', px: 1 }}
-                    size="small"
-                    color={antennaMode ? "primary" : "inherit"}
-                  >
-                    <AntennaIcon />
-                  </Button>
-                )}
-                {showInstallButton && (
-                  <Button
-                    variant="contained"
-                    onClick={handleInstallClick}
-                    color="primary"
-                    sx={{ minWidth: 'auto', px: 1 }}
-                    size="small"
-                  >
-                    <InstallIcon />
-                  </Button>
-                )}
-              </Box>
-            </CardContent>
-          </Card>
-        </Grid>
+        <DeviceBar
+          region={region}
+          onRegionChange={changeRegion}
+          devices={devices}
+          selectedDevice={selectedDevice}
+          onDeviceChange={handleDeviceChange}
+          onRefresh={() => discoverDevices(true)}
+          loading={loading}
+          deviceInfo={deviceInfo}
+          antennaMode={antennaMode}
+          onToggleAntennaMode={() => setAntennaMode(!antennaMode)}
+          showInstallButton={showInstallButton}
+          onInstall={install}
+        />
 
         {/* Antenna Tuning Mode */}
         {antennaMode && selectedDevice && (
@@ -948,372 +104,56 @@ function SignalMeter() {
           </Grid>
         )}
 
-        {/* Signal Display */}
-        {!antennaMode && selectedDevice && (
-          <Grid item xs={12}>
-            <Card>
-              <CardContent sx={{ py: 1, '&:last-child': { pb: 1 } }}>
-                {/* Channel Info and Controls */}
-                <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 1, flexWrap: 'wrap', gap: 1 }}>
-                  <Typography variant="h6" sx={{ fontSize: '1.1rem', minWidth: 'fit-content' }}>
-                    {!tunerStatus?.channel || tunerStatus.channel === 'none' ? 'Stopped' : tunerStatus.channel}
-                  </Typography>
-                  
-                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, flexWrap: 'wrap' }}>
-                    <TextField
-                      label="CH"
-                      variant="outlined"
-                      size="small"
-                      value={directChannel}
-                      onChange={(e) => setDirectChannel(e.target.value.replace(/\D/g, ''))}
-                      onKeyPress={(e) => {
-                        if (e.key === 'Enter') {
-                          tuneToDirectChannel(directChannel);
-                        }
-                      }}
-                      placeholder={String(getChannelRange(region, channelMap).max)}
-                      sx={{
-                        width: 60,
-                        '& .MuiOutlinedInput-root': {
-                          paddingLeft: 0,
-                          paddingRight: 0,
-                        },
-                        '& .MuiOutlinedInput-input': {
-                          padding: '6px 4px',
-                          textAlign: 'center',
-                          fontSize: '14px'
-                        }
-                      }}
-                      disabled={!selectedDevice}
-                      inputProps={{ maxLength: String(getChannelRange(region, channelMap).max).length, inputMode: 'numeric', pattern: '[0-9]*' }}
-                    />
-                    <Button variant="contained" onClick={() => tuneToDirectChannel(directChannel)} disabled={!selectedDevice || !directChannel} size="small" sx={{ minWidth: 'auto', px: 1 }}>
-                      <TuneIcon />
-                    </Button>
-                    <Button variant="outlined" onClick={decrementChannel} disabled={!selectedDevice} size="small" sx={{ minWidth: 'auto', px: 1 }}>
-                      <SkipPrevious />
-                    </Button>
-                    <Button variant="outlined" onClick={incrementChannel} disabled={!selectedDevice} size="small" sx={{ minWidth: 'auto', px: 1 }}>
-                      <SkipNext />
-                    </Button>
-                    <Button variant="contained" color="error" onClick={clearTuner} disabled={!selectedDevice || tunerStatus?.channel === 'none'} size="small" sx={{ minWidth: 'auto', px: 1 }}>
-                      <StopIcon />
-                    </Button>
-                  </Box>
-                </Box>
-                
-                {/* Compact Signal Display */}
-                {tunerStatus?.lock ? (() => {
-                  // Only show start/peak markers once the stats belong to the channel on screen
-                  const statsKey = `${selectedDevice}|${selectedTuner}|${tunerStatus.channel}`;
-                  const stats = signalStats?.key === statsKey ? signalStats : null;
-                  return (
-                  <>
-                  <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1, alignItems: 'center' }}>
-                    <Box sx={{ flex: '1 1 120px', minWidth: 120 }}>
-                      <Typography variant="body2" sx={{ fontSize: '0.75rem', mb: 0.5 }}>
-                        Signal: {tunerStatus.ss || 0}%
-                        {tunerStatus.ssDb && <span style={{ fontSize: '0.65rem', opacity: 0.8 }}> (~{tunerStatus.ssDb}dBm)</span>}
-                      </Typography>
-                      <SignalBar value={tunerStatus.ss} stats={stats?.ss} />
-                    </Box>
-                    <Box sx={{ flex: '1 1 120px', minWidth: 120 }}>
-                      <Typography variant="body2" sx={{ fontSize: '0.75rem', mb: 0.5 }}>
-                        SNR: {tunerStatus.snq || 0}%
-                        {tunerStatus.snrDb && tunerStatus.snrDb > 0 && <span style={{ fontSize: '0.65rem', opacity: 0.8 }}> (~{tunerStatus.snrDb}dB)</span>}
-                      </Typography>
-                      <SignalBar value={tunerStatus.snq} stats={stats?.snq} />
-                    </Box>
-                    <Box sx={{ flex: '1 1 120px', minWidth: 120 }}>
-                      <Typography variant="body2" sx={{ fontSize: '0.75rem', mb: 0.5 }}>Sym: {tunerStatus.seq || 0}%</Typography>
-                      <SignalBar value={tunerStatus.seq} stats={stats?.seq} />
-                    </Box>
-                    <Box sx={{ flex: '1 1 100px', minWidth: 100, textAlign: 'right' }}>
-                      <Typography variant="body2" sx={{ fontSize: '0.75rem' }}>Rate</Typography>
-                      <Typography variant="body1" sx={{ fontSize: '0.9rem', fontWeight: 500 }}>{formatDataRate(tunerStatus.bps)}</Typography>
-                    </Box>
-                  </Box>
-                  <Box sx={{ height: 180, mt: 1 }}>
-                    <SignalHistoryChart history={signalHistory} series={SERIES_BOTH} variant="detailed" />
-                  </Box>
-                  </>
-                  );
-                })() : (
-                  <Typography variant="body2" sx={{ textAlign: 'center', py: 1, color: 'text.secondary' }}>
-                    No signal detected
-                  </Typography>
-                )}
-              </CardContent>
-            </Card>
-          </Grid>
+        {showTunerPanels && (
+          <PanelCard>
+            <ChannelControls
+              tunerStatus={tunerStatus}
+              selectedDevice={selectedDevice}
+              directChannel={directChannel}
+              onDirectChannelChange={setDirectChannel}
+              maxChannel={getChannelRange(region, channelMap).max}
+              onTune={tuneToDirectChannel}
+              onPrevious={decrementChannel}
+              onNext={incrementChannel}
+              onStop={clearTuner}
+            />
+            <TunerMeters tunerStatus={tunerStatus} stats={signalStats} signalHistory={signalHistory} />
+          </PanelCard>
         )}
 
-        {/* Controls */}
-        {!antennaMode && selectedDevice && (
-          <Grid item xs={12}>
-            <Card>
-              <CardContent sx={{ py: 1, '&:last-child': { pb: 1 } }}>
-                <Box sx={{ display: 'flex', gap: 1, alignItems: 'center', flexWrap: 'wrap' }}>
-                  <FormControl sx={{ minWidth: 140, flex: 1 }} size="small">
-                    <InputLabel>Channel Map</InputLabel>
-                    <Select
-                      value={channelMap}
-                      label="Channel Map"
-                      onChange={(e) => setChannelMap(e.target.value)}
-                    >
-                      {CHANNEL_MAPS[region].map((map) => (
-                        <MenuItem key={map.value} value={map.value}>
-                          {map.label}
-                        </MenuItem>
-                      ))}
-                    </Select>
-                  </FormControl>
-
-                  {deviceInfo && (
-                    <FormControl sx={{ minWidth: 100 }} size="small">
-                      <InputLabel>Tuner</InputLabel>
-                      <Select
-                        value={selectedTuner}
-                        label="Tuner"
-                        onChange={(e) => setSelectedTuner(e.target.value)}
-                      >
-                        {Array.from({ length: deviceInfo.tuners }, (_, i) => (
-                          <MenuItem key={i} value={i}>
-                            Tuner {i}
-                          </MenuItem>
-                        ))}
-                      </Select>
-                    </FormControl>
-                  )}
-                </Box>
-              </CardContent>
-            </Card>
-          </Grid>
+        {showTunerPanels && (
+          <TunerSettings
+            region={region}
+            channelMap={channelMap}
+            onChannelMapChange={setChannelMap}
+            deviceInfo={deviceInfo}
+            selectedTuner={selectedTuner}
+            onTunerChange={setSelectedTuner}
+          />
         )}
 
-        {/* ATSC 3.0 Status Indicator */}
-        {!antennaMode && selectedDevice && isAtsc3Channel && (
-          <Grid item xs={12}>
-            <Card>
-              <CardContent sx={{ py: 1, '&:last-child': { pb: 1 } }}>
-                <Box sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
-                  <Chip 
-                    label="ATSC 3.0 Channel Detected" 
-                    color="success" 
-                    variant="outlined"
-                    size="small"
-                    sx={{ fontWeight: 600 }}
-                  />
-                  <Typography variant="body2" sx={{ fontSize: '0.8rem', color: 'text.secondary' }}>
-                    NextGen TV signal with enhanced data available
-                  </Typography>
-                </Box>
-              </CardContent>
-            </Card>
-          </Grid>
+        {showTunerPanels && (
+          <Atsc3Panels isAtsc3Channel={isAtsc3Channel} plpInfo={plpInfo} l1Info={l1Info} />
         )}
 
-        {/* PLP Information */}
-        {!antennaMode && selectedDevice && plpInfo && (
-          <Grid item xs={12}>
-            <Card>
-              <CardContent sx={{ py: 1, '&:last-child': { pb: 1 } }}>
-                <Typography variant="body1" sx={{ fontSize: '0.9rem', mb: 1, fontWeight: 500 }}>
-                  ATSC 3.0 PLP Information
-                </Typography>
-                <TableContainer component={Paper} sx={{ backgroundColor: 'transparent', boxShadow: 'none' }}>
-                  <Table size="small" sx={{ '& .MuiTableCell-root': { py: 0.5, fontSize: '0.8rem' } }}>
-                    <TableHead>
-                      <TableRow>
-                        <TableCell sx={{ fontWeight: 600 }}>PLP</TableCell>
-                        <TableCell sx={{ fontWeight: 600 }}>Modulation</TableCell>
-                        <TableCell sx={{ fontWeight: 600 }}>Code Rate</TableCell>
-                        <TableCell sx={{ fontWeight: 600 }}>Layer</TableCell>
-                        <TableCell sx={{ fontWeight: 600 }}>Time Interleaving</TableCell>
-                        <TableCell sx={{ fontWeight: 600 }}>LLS</TableCell>
-                        <TableCell sx={{ fontWeight: 600 }}>Lock</TableCell>
-                      </TableRow>
-                    </TableHead>
-                    <TableBody>
-                      {Object.entries(plpInfo).map(([plpId, info]) => (
-                        <TableRow key={plpId}>
-                          <TableCell>
-                            <Chip 
-                              label={plpId} 
-                              size="small" 
-                              color="primary" 
-                              variant="outlined"
-                              sx={{ height: 20, fontSize: '0.7rem' }}
-                            />
-                          </TableCell>
-                          <TableCell>{info.modulation || 'N/A'}</TableCell>
-                          <TableCell>{info.coderate || 'N/A'}</TableCell>
-                          <TableCell>{info.layer || 'N/A'}</TableCell>
-                          <TableCell>{info.timeInterleaving || 'N/A'}</TableCell>
-                          <TableCell>
-                            <Chip 
-                              label={info.lls ? 'Yes' : 'No'} 
-                              size="small" 
-                              color={info.lls ? 'success' : 'default'}
-                              sx={{ height: 18, fontSize: '0.65rem' }}
-                            />
-                          </TableCell>
-                          <TableCell>
-                            <Chip 
-                              label={info.lock ? 'Locked' : 'Unlocked'} 
-                              size="small" 
-                              color={info.lock ? 'success' : 'error'}
-                              sx={{ height: 18, fontSize: '0.65rem' }}
-                            />
-                          </TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                </TableContainer>
-              </CardContent>
-            </Card>
-          </Grid>
-        )}
-
-        {/* L1 Information */}
-        {!antennaMode && selectedDevice && l1Info && (
-          <Grid item xs={12}>
-            <Card>
-              <CardContent sx={{ py: 1, '&:last-child': { pb: 1 } }}>
-                <Typography variant="body1" sx={{ fontSize: '0.9rem', mb: 1, fontWeight: 500 }}>
-                  ATSC 3.0 L1 Information
-                </Typography>
-                <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 1 }}>
-                  {Object.entries(l1Info).map(([key, value]) => (
-                    <Box key={key} sx={{ display: 'flex', justifyContent: 'space-between', p: 0.5, backgroundColor: 'rgba(255,255,255,0.05)', borderRadius: 1 }}>
-                      <Typography variant="body2" sx={{ fontSize: '0.75rem', fontWeight: 500 }}>
-                        {key.replace(/_/g, ' ').toUpperCase()}:
-                      </Typography>
-                      <Typography variant="body2" sx={{ fontSize: '0.75rem' }}>
-                        {value}
-                      </Typography>
-                    </Box>
-                  ))}
-                </Box>
-              </CardContent>
-            </Card>
-          </Grid>
-        )}
-
-        {/* Current Channel Programs */}
-        {!antennaMode && selectedDevice && currentChannelPrograms.length > 0 && (
-          <Grid item xs={12}>
-            <Card>
-              <CardContent sx={{ py: 1, '&:last-child': { pb: 1 } }}>
-                <Typography variant="body1" sx={{ fontSize: '0.9rem', mb: 1, fontWeight: 500 }}>
-                  Programs on Channel {tunerStatus?.channel?.split(':')[0] || 'Unknown'}
-                </Typography>
-                <TableContainer component={Paper} sx={{ backgroundColor: 'transparent', boxShadow: 'none' }}>
-                  <Table size="small" sx={{ '& .MuiTableCell-root': { py: 0.5, fontSize: '0.8rem' } }}>
-                    <TableHead>
-                      <TableRow>
-                        <TableCell sx={{ fontWeight: 600 }}>PID</TableCell>
-                        <TableCell sx={{ fontWeight: 600 }}>Virtual</TableCell>
-                        <TableCell sx={{ fontWeight: 600 }}>Call Sign</TableCell>
-                        <TableCell sx={{ fontWeight: 600 }}>Status</TableCell>
-                        <TableCell sx={{ fontWeight: 600 }}>Watch</TableCell>
-                      </TableRow>
-                    </TableHead>
-                    <TableBody>
-                      {currentChannelPrograms.map((program, index) => (
-                        <TableRow key={index}>
-                          <TableCell>{program.programNum}</TableCell>
-                          <TableCell>
-                            <Chip 
-                              label={program.virtualChannel} 
-                              size="small" 
-                              color="primary" 
-                              variant="outlined"
-                              sx={{ height: 20, fontSize: '0.7rem' }}
-                            />
-                          </TableCell>
-                          <TableCell>{program.callsign}</TableCell>
-                          <TableCell>
-                            {program.encrypted && (
-                              <Chip label="Encrypted" size="small" color="warning" sx={{ height: 18, fontSize: '0.65rem' }} />
-                            )}
-                            {program.status && !program.encrypted && (
-                              <Chip label={program.status} size="small" sx={{ height: 18, fontSize: '0.65rem' }} />
-                            )}
-                          </TableCell>
-                          <TableCell>
-                            <Button
-                              size="small"
-                              variant="contained"
-                              color="primary"
-                              onClick={() => {
-                                const rawChannel = tunerStatus?.channel?.split(':')[1];
-                                if (!rawChannel) return;
-                                // If it's already a frequency (9+ digits), use as-is; otherwise convert RF channel to frequency
-                                const freq = rawChannel.length >= 9 ? rawChannel : channelToFrequency(rawChannel, region);
-                                if (!freq) return;
-                                const channelName = `${program.callsign} ${program.virtualChannel}`;
-                                window.location.href = `/api/devices/${encodeURIComponent(selectedDevice)}/stream/play.m3u?ch=${encodeURIComponent(freq)}&program=${encodeURIComponent(program.programNum)}&name=${encodeURIComponent(channelName)}`;
-                              }}
-                              onContextMenu={(e) => {
-                                e.preventDefault();
-                                setContextMenu({ mouseX: e.clientX, mouseY: e.clientY, program });
-                              }}
-                              sx={{ minWidth: 'auto', px: 1, py: 0.25, fontSize: '0.7rem' }}
-                              startIcon={<PlayIcon sx={{ fontSize: '0.9rem !important' }} />}
-                            >
-                              Watch
-                            </Button>
-                          </TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                </TableContainer>
-              </CardContent>
-            </Card>
-          </Grid>
+        {showTunerPanels && currentChannelPrograms.length > 0 && (
+          <ProgramTable
+            programs={currentChannelPrograms}
+            tunerStatus={tunerStatus}
+            region={region}
+            selectedDevice={selectedDevice}
+            onContextMenu={setContextMenu}
+          />
         )}
       </Grid>
 
-      {/* Context menu for copying stream URL */}
-      <Menu
-        open={contextMenu !== null}
+      <StreamContextMenu
+        contextMenu={contextMenu}
         onClose={() => setContextMenu(null)}
-        anchorReference="anchorPosition"
-        anchorPosition={
-          contextMenu !== null
-            ? { top: contextMenu.mouseY, left: contextMenu.mouseX }
-            : undefined
-        }
-      >
-        <MenuItem
-          onClick={async () => {
-            if (contextMenu?.program) {
-              try {
-                const rawChannel = tunerStatus?.channel?.split(':')[1];
-                if (!rawChannel) return;
-                const freq = rawChannel.length >= 9 ? rawChannel : channelToFrequency(rawChannel, region);
-                if (!freq) return;
-                const response = await axios.get(
-                  `/api/devices/${selectedDevice}/stream/url?ch=${freq}&program=${contextMenu.program.programNum}`
-                );
-                await navigator.clipboard.writeText(response.data.url);
-              } catch (error) {
-                console.error('Failed to copy stream URL:', error);
-              }
-            }
-            setContextMenu(null);
-          }}
-        >
-          <ListItemIcon>
-            <CopyIcon fontSize="small" />
-          </ListItemIcon>
-          <ListItemText>Copy Stream URL</ListItemText>
-        </MenuItem>
-      </Menu>
-
+        tunerStatus={tunerStatus}
+        region={region}
+        selectedDevice={selectedDevice}
+      />
     </Box>
   );
 }
