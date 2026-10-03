@@ -13,6 +13,7 @@ import {
 import { PlayArrow as PlayIcon } from '@mui/icons-material';
 import PanelCard from './PanelCard';
 import { streamFrequency } from '../../utils/channels';
+import { streamUrl } from '../../utils/streamUrl';
 
 // The programs on the tuned channel. Watch opens the stream in the user's
 // player; right-clicking it asks onContextMenu({ mouseX, mouseY, program }).
@@ -21,7 +22,11 @@ export default function ProgramTable({ programs, tunerStatus, region, selectedDe
     const freq = streamFrequency(tunerStatus?.channel, region);
     if (!freq) return;
     const channelName = `${program.callsign} ${program.virtualChannel}`;
-    window.location.href = `/api/devices/${encodeURIComponent(selectedDevice)}/stream/play.m3u?ch=${encodeURIComponent(freq)}&program=${encodeURIComponent(program.programNum)}&name=${encodeURIComponent(channelName)}`;
+    window.location.href = streamUrl(selectedDevice, 'play.m3u', {
+      ch: freq,
+      program: program.programNum,
+      name: channelName
+    });
   };
 
   return (

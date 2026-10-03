@@ -2,24 +2,26 @@ import { ListItemIcon, ListItemText, Menu, MenuItem } from '@mui/material';
 import { ContentCopy as CopyIcon } from '@mui/icons-material';
 import axios from 'axios';
 import { streamFrequency } from '../../utils/channels';
+import { streamUrl } from '../../utils/streamUrl';
 
 // Right-click menu on a program's Watch button. `contextMenu` is
 // { mouseX, mouseY, program }, or null while the menu is closed.
 export default function StreamContextMenu({ contextMenu, onClose, tunerStatus, region, selectedDevice }) {
+  // The menu closes whether or not the copy works
   const copyStreamUrl = async () => {
-    if (contextMenu?.program) {
-      try {
-        const freq = streamFrequency(tunerStatus?.channel, region);
-        if (!freq) return;
+    try {
+      const freq = streamFrequency(tunerStatus?.channel, region);
+      if (contextMenu?.program && freq) {
         const response = await axios.get(
-          `/api/devices/${selectedDevice}/stream/url?ch=${freq}&program=${contextMenu.program.programNum}`
+          streamUrl(selectedDevice, 'url', { ch: freq, program: contextMenu.program.programNum })
         );
         await navigator.clipboard.writeText(response.data.url);
-      } catch (error) {
-        console.error('Failed to copy stream URL:', error);
       }
+    } catch (error) {
+      console.error('Failed to copy stream URL:', error);
+    } finally {
+      onClose();
     }
-    onClose();
   };
 
   return (
