@@ -53,7 +53,7 @@ The original Android app functionality has been recreated and enhanced with:
 
 - Docker and Docker Compose, or a Kubernetes cluster
 - HDHomeRun device(s) on your network
-- For automatic device discovery, the container needs host networking, because discovery is a network broadcast. If the broadcast finds nothing, pressing refresh falls back to SiliconDust's discovery service (`ipv4-api.hdhomerun.com`). To avoid any outside lookup, list your tuners in `HDHOMERUN_DEVICES` and set `HDHOMERUN_DISABLE_DISCOVERY=true`.
+- For automatic device discovery, the container needs host networking, because discovery is a network broadcast. If the broadcast finds nothing, pressing refresh falls back to SiliconDust's discovery service (`ipv4-api.hdhomerun.com`). To keep local discovery but never make that outside lookup, set `HDHR_DISABLE_CLOUD_DISCOVERY=true`. To turn off discovery entirely, list your tuners in `HDHOMERUN_DEVICES` and set `HDHOMERUN_DISABLE_DISCOVERY=true`.
 
 ### System Requirements
 
@@ -96,6 +96,8 @@ services:
       #- HDHOMERUN_DEVICES=192.168.1.100,192.168.2.50
       # Optional: only use the devices listed above
       #- HDHOMERUN_DISABLE_DISCOVERY=true
+      # Optional: keep local discovery but never ask SiliconDust's cloud service
+      #- HDHR_DISABLE_CLOUD_DISCOVERY=true
 ```
 
 Then open `http://your-server-ip:3000`. The app discovers HDHomeRun devices on your network automatically.
@@ -127,7 +129,7 @@ kubectl -n hdhomerun port-forward svc/hdhr-hdhomerun-signal 8080:80
 Tagged releases also publish the chart as an OCI artifact:
 `helm install hdhr oci://ghcr.io/cyberglitchlabs/charts/hdhomerun-signal --version <version> ...`
 
-**Device discovery.** Discovery works by broadcast, which does not cross the pod network. By default the chart therefore talks only to the tuner IPs or hostnames in `hdhomerun.devices`. To use auto-discovery, set `hostNetwork=true` and `hdhomerun.discovery.enabled=true` and schedule the pod on a node on the same LAN as the tuners. `hostNetwork` bypasses pod network isolation (NetworkPolicy does not apply and it does not meet the *restricted* Pod Security Standard), so prefer static device addresses.
+**Device discovery.** Discovery works by broadcast, which does not cross the pod network. By default the chart therefore talks only to the tuner IPs or hostnames in `hdhomerun.devices`. To use auto-discovery, set `hostNetwork=true` and `hdhomerun.discovery.enabled=true` and schedule the pod on a node on the same LAN as the tuners. If the broadcast finds nothing, a refresh falls back to SiliconDust's cloud lookup; set `hdhomerun.discovery.cloud=false` to prevent that. `hostNetwork` bypasses pod network isolation (NetworkPolicy does not apply and it does not meet the *restricted* Pod Security Standard), so prefer static device addresses.
 
 **Security defaults.** The pod runs as a non-root user with a read-only root filesystem, no capabilities, the `RuntimeDefault` seccomp profile, and no service account token. A NetworkPolicy limits egress to DNS and the tuner control port (65001) and ingress to the release namespace; use `networkPolicy.ingress.from` to admit your ingress controller. The Ingress is off by default and requires TLS when enabled.
 
@@ -195,6 +197,7 @@ Perfect for aligning your antenna for optimal signal reception:
 | `PORT` | Web server port | `3000` |
 | `HDHOMERUN_DEVICES` | Comma-separated list of device IPs or hostnames to manually add (supplements auto-discovery) | *(empty)* |
 | `HDHOMERUN_DISABLE_DISCOVERY` | Set to `true` to disable auto-discovery (use only manually specified devices) | `false` |
+| `HDHR_DISABLE_CLOUD_DISCOVERY` | Set to `true` to keep local broadcast discovery but never fall back to SiliconDust's cloud lookup (`ipv4-api.hdhomerun.com`) when the broadcast finds nothing. Has no effect when `HDHOMERUN_DISABLE_DISCOVERY=true`, which already disables both | `false` |
 | `HDHR_ALLOWED_ORIGINS` | Comma-separated browser origins (e.g. `https://hdhr.example.com`) allowed to call the API cross-origin. Only needed if the UI is served from a different origin than the API | *(empty, same-origin only)* |
 | `HDHR_RATE_LIMIT` | Requests per minute allowed per client address (channel scans have a separate, stricter limit). `0` disables limiting | `300` |
 | `HDHR_TRUST_PROXY` | Which reverse proxies may set `X-Forwarded-For`, so rate limiting sees the real client address: a proxy hop count (`1`-`32`) or a comma-separated list of proxy IPs/CIDRs (e.g. `10.42.0.0/16`). `true`, `false`, `0` and zero-length prefixes such as `0.0.0.0/0` are refused, and **an invalid value stops the server from starting**. Leave unset if the app is not behind a proxy | *(empty, trust nothing)* |
@@ -211,6 +214,9 @@ HDHOMERUN_DEVICES=192.168.1.100,hdhomerun.local,10.0.0.25
 # Disable auto-discovery and only use specified devices
 HDHOMERUN_DISABLE_DISCOVERY=true
 HDHOMERUN_DEVICES=192.168.1.100,192.168.1.101
+
+# Keep local broadcast discovery, but never ask the SiliconDust cloud service
+HDHR_DISABLE_CLOUD_DISCOVERY=true
 ```
 
 ### Region Selection

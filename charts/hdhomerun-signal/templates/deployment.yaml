@@ -53,6 +53,8 @@ spec:
               value: "3000"
             - name: HDHOMERUN_DISABLE_DISCOVERY
               value: {{ ternary "false" "true" .Values.hdhomerun.discovery.enabled | quote }}
+            - name: HDHR_DISABLE_CLOUD_DISCOVERY
+              value: {{ ternary "false" "true" .Values.hdhomerun.discovery.cloud | quote }}
             {{- if .Values.hdhomerun.devices }}
             - name: HDHOMERUN_DEVICES
               value: {{ join "," .Values.hdhomerun.devices | quote }}

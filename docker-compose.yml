@@ -12,3 +12,5 @@ services:
       #- HDHOMERUN_DEVICES=192.168.1.100,192.168.2.50
       # Set to 'true' to disable auto-discovery (only use manually specified devices)
       #- HDHOMERUN_DISABLE_DISCOVERY=true
+      # Set to 'true' to keep local discovery but never ask SiliconDust's cloud service
+      #- HDHR_DISABLE_CLOUD_DISCOVERY=true

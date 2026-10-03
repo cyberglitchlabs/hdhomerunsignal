@@ -211,11 +211,28 @@ jobs:
           helm template ci charts/hdhomerun-signal \
             --set hostNetwork=true --set hdhomerun.discovery.enabled=true \
             > rendered/hostnetwork/manifests.yaml
+          # Cloud discovery fallback switched off.
+          mkdir -p rendered/nocloud
+          helm template ci charts/hdhomerun-signal \
+            --set 'hdhomerun.devices={192.0.2.10}' \
+            --set hdhomerun.discovery.cloud=false \
+            > rendered/nocloud/manifests.yaml
+      - name: Check the cloud discovery setting reaches the container
+        run: |
+          # The fallback stays on by default and is only switched off on request.
+          grep -A1 'name: HDHR_DISABLE_CLOUD_DISCOVERY' rendered/secure/manifests.yaml | grep -q 'value: "false"'
+          grep -A1 'name: HDHR_DISABLE_CLOUD_DISCOVERY' rendered/nocloud/manifests.yaml | grep -q 'value: "true"'
+          # A non-boolean value is rejected by the schema.
+          if helm template ci charts/hdhomerun-signal --set 'hdhomerun.devices={192.0.2.10}' \
+              --set hdhomerun.discovery.cloud=maybe >/dev/null 2>&1; then
+            echo "expected the schema to reject hdhomerun.discovery.cloud=maybe" >&2
+            exit 1
+          fi
       - name: kubeconform
         run: >
           docker run --rm -v "$PWD/rendered:/m:ro"
           "$KUBECONFORM_IMAGE"
-          -strict -summary /m/secure /m/hostnetwork
+          -strict -summary /m/secure /m/hostnetwork /m/nocloud
       - name: kube-linter (default deployment)
         run: >
           docker run --rm -v "$PWD/rendered:/m:ro"
