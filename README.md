@@ -311,8 +311,10 @@ uses Vitest; `npm run test:watch` re-runs on change). `npm run build` in
 The backend tests are black-box: they spawn the server as a child process with a
 fake `hdhomerun_config` on `PATH`. Set `SERVER_CMD` to run them against a
 different implementation of the same HTTP contract, for example
-`SERVER_CMD=/path/to/hdhr-server npm test`. The command must print
-`running on port <n>` once it is listening.
+`SERVER_CMD=/path/to/hdhr-server SERVER_API_PREFIX=/api/v1 npm test`. The
+command must print `running on port <n>` once it is listening, and
+`SERVER_API_PREFIX` says where it serves the API: the tests are written against
+`/api/...` and every such path is rewritten to use it.
 
 Pull requests are checked by CI: unit tests, `npm audit`, Dockerfile and workflow linting, secret scanning, dependency review, CodeQL, a Trivy scan of the built image, Helm chart validation, and a smoke test of the image under a read-only filesystem with all capabilities dropped. Pushes to `main` build, scan, publish and sign the image.
 

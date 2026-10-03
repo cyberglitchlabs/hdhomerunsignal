@@ -155,6 +155,14 @@ async function startServer(env) {
   return server;
 }
 
+// The tests are written against the unversioned /api/... paths. A server that
+// serves the API somewhere else says where in SERVER_API_PREFIX (e.g. /api/v1),
+// and every /api/ path a test uses is rewritten to match.
+function apiPath(urlPath) {
+  const prefix = process.env.SERVER_API_PREFIX;
+  return prefix && urlPath.startsWith('/api/') ? prefix + urlPath.slice('/api'.length) : urlPath;
+}
+
 // Minimal HTTP client: unlike fetch it lets a test set Origin and Host freely.
 function request(port, { method = 'GET', path: urlPath = '/', headers = {}, body } = {}) {
   return new Promise((resolve, reject) => {
@@ -164,7 +172,7 @@ function request(port, { method = 'GET', path: urlPath = '/', headers = {}, body
       host: '127.0.0.1',
       port,
       method,
-      path: urlPath,
+      path: apiPath(urlPath),
       agent: false,
       headers: {
         ...(payload !== undefined && { 'Content-Type': 'application/json' }),
@@ -191,7 +199,7 @@ function openStream(port, urlPath, { headers = {} } = {}) {
     const comments = [];
     let buffer = '';
     const req = http.request({
-      host: '127.0.0.1', port, method: 'GET', path: urlPath, agent: false,
+      host: '127.0.0.1', port, method: 'GET', path: apiPath(urlPath), agent: false,
       headers: { Accept: 'text/event-stream', ...headers }
     }, (res) => {
       const closed = new Promise((done) => { res.on('close', done); });
