@@ -1,0 +1,5 @@
+tun: ch=auto:34 lock=8vsb:593000000 ss=86 snq=100 seq=100 dbg=-4825/-10460
+dev: bps=19494848 resync=0 overflow=0
+ts:  bps=19494848 te=0 crc=0
+net: bps=0 pps=0 err=0 stop=0
+

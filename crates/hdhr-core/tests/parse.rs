@@ -128,6 +128,23 @@ fn idle_tuner_status() {
 }
 
 #[test]
+fn tuned_tuner_status_from_hardware() {
+    let status = parse_tuner_status(
+        fixture!("hardware-status-locked.txt"),
+        Some(fixture!("hardware-debug-locked.txt")),
+    );
+    // This firmware prints dbg=-4825/-10460, not the signal-snr/n form the dB
+    // estimate reads, so there are no dB fields. The Node server behaved the same.
+    assert_eq!(
+        to_json(&status),
+        json!({
+            "channel": "auto:34", "lock": true, "ss": 86, "snq": 100, "seq": 100,
+            "bps": 19494848, "pps": 0
+        })
+    );
+}
+
+#[test]
 fn the_word_none_alone_is_an_unlocked_idle_tuner() {
     assert_eq!(
         to_json(&parse_tuner_status("none\n", None)),
@@ -216,6 +233,55 @@ fn current_program() {
 #[test]
 fn streaminfo_of_an_idle_tuner_has_no_programs() {
     assert!(parse_streaminfo(fixture!("hardware-streaminfo-none.txt")).is_empty());
+}
+
+#[test]
+fn streaminfo_from_a_tuned_tuner() {
+    // Programs come first and the tsid line last, which matches no program.
+    let programs = parse_streaminfo(fixture!("hardware-streaminfo-locked.txt"));
+    let summary: Vec<_> = programs
+        .iter()
+        .map(|p| {
+            (
+                p.program_num.as_str(),
+                p.virtual_channel.as_str(),
+                p.name.as_str(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        summary,
+        [
+            ("3", "2.1", "MNPBS"),
+            ("4", "2.4", "MNKIDS"),
+            ("5", "2.3", "MNLIFE"),
+            ("6", "2.5", "MNREADY"),
+            ("7", "2.2", "MNCH")
+        ]
+    );
+    assert!(
+        programs
+            .iter()
+            .all(|p| p.status.is_empty() && !p.encrypted && !p.atsc3)
+    );
+}
+
+#[test]
+fn streaminfo_agrees_with_the_scan_of_the_same_channel() {
+    // The scan and a tuned tuner are two views of channel 34; they must list the same programs.
+    let scanned = parse_scan(fixture!("hardware-scan-us-bcast.txt"));
+    let channel_34 = scanned.iter().find(|c| c.channel == "us-bcast:34").unwrap();
+    let tuned = parse_streaminfo(fixture!("hardware-streaminfo-locked.txt"));
+    let from_scan: Vec<_> = channel_34
+        .programs
+        .iter()
+        .map(|p| (&p.program_num, &p.virtual_channel, &p.name))
+        .collect();
+    let from_tuner: Vec<_> = tuned
+        .iter()
+        .map(|p| (&p.program_num, &p.virtual_channel, &p.name))
+        .collect();
+    assert_eq!(from_scan, from_tuner);
 }
 
 #[test]

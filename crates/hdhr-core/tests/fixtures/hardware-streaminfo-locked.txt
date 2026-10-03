@@ -1,0 +1,7 @@
+3: 2.1 MNPBS
+4: 2.4 MNKIDS
+5: 2.3 MNLIFE
+6: 2.5 MNREADY
+7: 2.2 MNCH
+tsid=0x0645
+

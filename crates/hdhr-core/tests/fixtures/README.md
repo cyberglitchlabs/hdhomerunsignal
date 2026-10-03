@@ -8,3 +8,5 @@
   comments describe, for states the test device cannot produce (a tuned
   tuner, ATSC 3.0, the cloud lookup). Replace them with captures when a
   device that can produce them is at hand.
+- `hardware-*-locked.txt` were captured with tuner 0 tuned to `auto:34`
+  (us-bcast channel 34, 593 MHz); the tuner was cleared afterwards.
