@@ -1,0 +1,33 @@
+[package]
+name = "hdhr-server"
+description = "The HDHomeRun Signal HTTP server."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "hdhr-server"
+path = "src/main.rs"
+
+[dependencies]
+axum = "0.8.9"
+futures-util = "0.3.34"
+hdhr-client = { version = "0.1.0", path = "../hdhr-client" }
+hdhr-core = { version = "0.1.0", path = "../hdhr-core" }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
+tokio = { version = "1.53.2", features = ["rt-multi-thread", "macros", "net", "signal", "time", "sync"] }
+tower-http = { version = "0.7.1", features = ["fs", "limit"] }
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", default-features = false, features = ["fmt", "ansi"] }
+url = "2.5.8"
+
+[dev-dependencies]
+async-trait = "0.1.92"
+http-body-util = "0.1.5"
+tokio = { version = "1.53.2", features = ["test-util"] }
+tower = { version = "0.5.3", features = ["util"] }
