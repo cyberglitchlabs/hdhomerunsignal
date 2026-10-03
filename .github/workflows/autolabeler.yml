@@ -1,0 +1,29 @@
+name: Autolabeler
+
+# Uses pull_request (not pull_request_target) so that no workflow with write
+# access ever runs code from a pull request. The token is read-only for pull
+# requests from forks and for Dependabot, so those are skipped; Dependabot
+# labels its own pull requests.
+on:
+  pull_request:
+    types: [opened, reopened, synchronize]
+
+permissions: {}
+
+concurrency:
+  group: autolabeler-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  label:
+    name: Label pull request
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository
+      && github.actor != 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read # read the release-drafter config
+      pull-requests: write # add labels
+    steps:
+      - uses: release-drafter/release-drafter/autolabeler@72967cdc98ddd3160f1fc3dff619de365e137dd0 # v7.9.0

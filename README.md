@@ -294,6 +294,10 @@ Run the backend tests with `npm test` in `/backend`.
 
 Pull requests are checked by CI: unit tests, `npm audit`, Dockerfile and workflow linting, secret scanning, dependency review, CodeQL, a Trivy scan of the built image, Helm chart validation, and a smoke test of the image under a read-only filesystem with all capabilities dropped. Pushes to `main` build, scan, publish and sign the image.
 
+### Releases
+
+Releases are drafted automatically. Each merged pull request is added to a draft GitHub release and grouped by label (labels are applied from the files a pull request touches and its branch name; adjust them on the pull request if they are wrong, and add `skip-changelog` to leave one out). To make a release, review the draft under *Releases*, edit the notes or version if needed, and publish it. Publishing creates the version tag, which builds, scans, publishes and signs the container image and the Helm chart.
+
 ## Troubleshooting
 
 ### No devices found
