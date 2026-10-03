@@ -15,10 +15,13 @@ const fs = require('fs');
 const args = process.argv.slice(2);
 fs.appendFileSync(process.env.FAKE_HDHR_LOG, JSON.stringify(args) + '\\n');
 const target = args[1] === 'get' || args[1] === 'set' ? args[2] : '';
-if (args[0] === 'discover' && args.length === 1) { if (process.env.FAKE_DISCOVER_OUTPUT) console.log(process.env.FAKE_DISCOVER_OUTPUT); }
-else if (target === '/sys/model') console.log('HDHR5-4US');
-else if (target === '/sys/hwmodel') console.log('HDHR5-4US');
-else if (/\\/status$/.test(target)) console.log('ch=8vsb:27 lock=8vsb ss=90 snq=80 seq=100 bps=0 pps=0');
+// FAKE_HDHR_DELAY_MS makes every call slow, like a tuner that is slow to answer.
+setTimeout(() => {
+  if (args[0] === 'discover' && args.length === 1) { if (process.env.FAKE_DISCOVER_OUTPUT) console.log(process.env.FAKE_DISCOVER_OUTPUT); }
+  else if (target === '/sys/model') console.log('HDHR5-4US');
+  else if (target === '/sys/hwmodel') console.log('HDHR5-4US');
+  else if (/\\/status$/.test(target)) console.log('ch=8vsb:27 lock=8vsb ss=90 snq=80 seq=100 bps=0 pps=0');
+}, Number(process.env.FAKE_HDHR_DELAY_MS || 0));
 `;
 
 function sleep(ms) {
@@ -41,21 +44,31 @@ function makeFakeTool() {
   fs.writeFileSync(bin, FAKE_TOOL, { mode: 0o755 });
   const log = path.join(dir, 'calls.log');
   fs.writeFileSync(log, '');
-  const httpsLog = path.join(dir, 'https.log');
-  fs.writeFileSync(httpsLog, '');
-  return { dir, log, httpsLog };
+  return { dir, log };
 }
+
+// The server under test: `node server.js` by default, or any other backend
+// implementing the same HTTP contract via SERVER_CMD (a command and optional
+// arguments separated by spaces, e.g. SERVER_CMD=target/debug/hdhr-server). It
+// must print "running on port <n>" once listening; that is how tests find it.
+function serverCommand() {
+  const [cmd, ...args] = (process.env.SERVER_CMD || '').split(/\s+/).filter(Boolean);
+  return cmd ? [cmd, args] : [process.execPath, [path.join(__dirname, 'server.js')]];
+}
+
+// Unroutable: nothing under test may reach the real cloud lookup. startServer
+// swaps in a local stub that records the requests instead.
+const NO_CLOUD_URL = 'http://127.0.0.1:9/discover';
 
 function spawnServer(env = {}) {
   const tool = makeFakeTool();
-  const proc = spawn(process.execPath, [path.join(__dirname, 'server.js')], {
+  const [cmd, args] = serverCommand();
+  const proc = spawn(cmd, args, {
     env: {
       ...process.env,
       PATH: `${tool.dir}${path.delimiter}${process.env.PATH}`,
       FAKE_HDHR_LOG: tool.log,
-      // The server never reaches the network under test; see test-https-stub.js.
-      FAKE_HTTPS_LOG: tool.httpsLog,
-      NODE_OPTIONS: `--require ${JSON.stringify(path.join(__dirname, 'test-https-stub.js'))}`,
+      HDHR_CLOUD_DISCOVERY_URL: NO_CLOUD_URL,
       PORT: '0',
       HDHOMERUN_DISABLE_DISCOVERY: 'true',
       HDHR_DISABLE_CLOUD_DISCOVERY: '',
@@ -78,8 +91,6 @@ function spawnServer(env = {}) {
 
   const calls = () => fs.readFileSync(tool.log, 'utf8')
     .split('\n').filter(Boolean).map((line) => JSON.parse(line));
-
-  const httpsCalls = () => fs.readFileSync(tool.httpsLog, 'utf8').split('\n').filter(Boolean);
 
   // Resolves with the bound port, or rejects if the server exits first.
   const ready = new Promise((resolve, reject) => {
@@ -104,7 +115,6 @@ function spawnServer(env = {}) {
     ready,
     output: () => output,
     calls,
-    httpsCalls,
     clearCalls: () => fs.writeFileSync(tool.log, ''),
     async stop() {
       if (proc.exitCode === null && proc.signalCode === null) proc.kill('SIGKILL');
@@ -115,9 +125,27 @@ function spawnServer(env = {}) {
   };
 }
 
-// Starts the server and resolves once it is listening.
+// Local stand-in for the cloud discovery API: answers with an empty device list
+// and records the path of every request.
+async function startCloudStub() {
+  const calls = [];
+  const stub = http.createServer((req, res) => {
+    calls.push(req.url);
+    res.setHeader('Content-Type', 'application/json');
+    res.end('[]');
+  });
+  await new Promise((resolve) => stub.listen(0, '127.0.0.1', resolve));
+  return { calls, url: `http://127.0.0.1:${stub.address().port}/discover`, close: () => stub.close() };
+}
+
+// Starts the server and resolves once it is listening. server.cloudCalls()
+// lists the request paths it sent to the cloud discovery stub.
 async function startServer(env) {
-  const server = spawnServer(env);
+  const stub = await startCloudStub();
+  const server = spawnServer({ HDHR_CLOUD_DISCOVERY_URL: stub.url, ...env });
+  server.cloudCalls = () => [...stub.calls];
+  const stop = server.stop;
+  server.stop = async () => { await stop(); stub.close(); };
   try {
     server.port = await server.ready;
   } catch (err) {
@@ -154,34 +182,49 @@ function request(port, { method = 'GET', path: urlPath = '/', headers = {}, body
   });
 }
 
-// Socket.IO over plain HTTP long-polling, so no client library is needed.
-// Packets are Engine.IO v4: "0{...}" open, "40" connect, "42[...]" event.
-const SIO = '/socket.io/?EIO=4&transport=polling';
-
-async function socketHandshake(port, headers = {}) {
-  const res = await request(port, { path: `${SIO}&t=${Date.now()}`, headers });
-  if (res.status !== 200) return { res };
-  const open = JSON.parse(res.body.slice(res.body.indexOf('{')));
-  return { res, sid: open.sid };
+// Opens a Server-Sent Events subscription and collects what arrives. Resolves
+// once the response headers are in. `events` holds { event, data } for each
+// event (data parsed as JSON), and `comments` the keepalive comment lines.
+function openStream(port, urlPath, { headers = {} } = {}) {
+  return new Promise((resolve, reject) => {
+    const events = [];
+    const comments = [];
+    let buffer = '';
+    const req = http.request({
+      host: '127.0.0.1', port, method: 'GET', path: urlPath, agent: false,
+      headers: { Accept: 'text/event-stream', ...headers }
+    }, (res) => {
+      const closed = new Promise((done) => { res.on('close', done); });
+      if (res.statusCode !== 200) {
+        let body = '';
+        res.setEncoding('utf8');
+        res.on('data', (chunk) => { body += chunk; });
+        res.on('end', () => resolve({ status: res.statusCode, headers: res.headers, body, events, comments, closed, close() {} }));
+        return;
+      }
+      res.setEncoding('utf8');
+      res.on('data', (chunk) => {
+        buffer += chunk;
+        let end;
+        while ((end = buffer.indexOf('\n\n')) !== -1) {
+          const block = buffer.slice(0, end);
+          buffer = buffer.slice(end + 2);
+          let event = 'message';
+          let data = '';
+          for (const line of block.split('\n')) {
+            if (line.startsWith(':')) comments.push(line.slice(1).trim());
+            else if (line.startsWith('event:')) event = line.slice(6).trim();
+            else if (line.startsWith('data:')) data += line.slice(5).trim();
+          }
+          if (data) events.push({ event, data: JSON.parse(data) });
+        }
+      });
+      res.on('error', () => {});
+      resolve({ status: res.statusCode, headers: res.headers, events, comments, closed, close: () => req.destroy() });
+    });
+    req.on('error', reject);
+    req.end();
+  });
 }
 
-// Opens a polling session, connects to the default namespace and returns a
-// function that emits events on it.
-async function socketConnect(port) {
-  const { res, sid } = await socketHandshake(port);
-  if (!sid) throw new Error(`Socket.IO handshake failed with ${res.status}`);
-  const url = `${SIO}&sid=${sid}`;
-  await request(port, { method: 'POST', path: url, body: '40', headers: { 'Content-Type': 'text/plain' } });
-  await request(port, { path: url }); // read the namespace connect packet
-  return {
-    sid,
-    emit: (event, payload) => request(port, {
-      method: 'POST',
-      path: url,
-      body: `42${JSON.stringify([event, payload])}`,
-      headers: { 'Content-Type': 'text/plain' }
-    })
-  };
-}
-
-module.exports = { startServer, spawnServer, request, socketHandshake, socketConnect, sleep, waitFor, SIO };
+module.exports = { startServer, spawnServer, request, openStream, sleep, waitFor };

@@ -137,7 +137,9 @@ Tagged releases also publish the chart as an OCI artifact:
 
 **Behind an ingress or reverse proxy.** Set `trustProxy` (the `HDHR_TRUST_PROXY` variable) so per-client rate limiting sees each user's real address; `--set trustProxy=1` is right for a single ingress controller directly in front of the pod. Without it every client shares the proxy's address and therefore one rate-limit bucket. Set it to the number of proxies you actually run, or their addresses, and no more: trusting a proxy hop that is not there lets any client spoof its address with an `X-Forwarded-For` header. (Tested with one hop; if a load balancer sits in front of your ingress controller, count both.)
 
-The proxy must also **preserve the original `Host` header** (nginx-ingress does by default). The API and WebSocket reject browser requests whose `Origin` does not match the `Host` they arrive with, and `X-Forwarded-Host` is not consulted. If your proxy rewrites `Host`, list the public origin in `allowedOrigins` (`HDHR_ALLOWED_ORIGINS`) instead.
+Real-time updates are long-lived Server-Sent Events responses, so the proxy must not buffer or time out `/api/devices/:id/.../stream`. The server sends `X-Accel-Buffering: no` and a keepalive comment every 15 seconds; with nginx-ingress, raise `proxy-read-timeout` above that if you have lowered it.
+
+The proxy must also **preserve the original `Host` header** (nginx-ingress does by default). The API (including the event streams) rejects browser requests whose `Origin` does not match the `Host` they arrive with, and `X-Forwarded-Host` is not consulted. If your proxy rewrites `Host`, list the public origin in `allowedOrigins` (`HDHR_ALLOWED_ORIGINS`) instead.
 
 ### Image provenance
 
@@ -198,8 +200,10 @@ Perfect for aligning your antenna for optimal signal reception:
 | `HDHOMERUN_DEVICES` | Comma-separated list of device IPs or hostnames to manually add (supplements auto-discovery) | *(empty)* |
 | `HDHOMERUN_DISABLE_DISCOVERY` | Set to `true` to disable auto-discovery (use only manually specified devices) | `false` |
 | `HDHR_DISABLE_CLOUD_DISCOVERY` | Set to `true` to keep local broadcast discovery but never fall back to SiliconDust's cloud lookup (`ipv4-api.hdhomerun.com`) when the broadcast finds nothing. Has no effect when `HDHOMERUN_DISABLE_DISCOVERY=true`, which already disables both | `false` |
+| `HDHR_CLOUD_DISCOVERY_URL` | URL of the cloud discovery lookup. Meant for tests and alternative backends that need to stub it; `http://` and `https://` both work | `https://ipv4-api.hdhomerun.com/discover` |
 | `HDHR_ALLOWED_ORIGINS` | Comma-separated browser origins (e.g. `https://hdhr.example.com`) allowed to call the API cross-origin. Only needed if the UI is served from a different origin than the API | *(empty, same-origin only)* |
 | `HDHR_RATE_LIMIT` | Requests per minute allowed per client address (channel scans have a separate, stricter limit). `0` disables limiting | `300` |
+| `HDHR_MAX_STREAMS_PER_CLIENT` | How many real-time event streams one client address may hold open at once. Streams are not counted by `HDHR_RATE_LIMIT`, because a browser never retries a stream refused with 429. `0` removes the cap | `16` |
 | `HDHR_TRUST_PROXY` | Which reverse proxies may set `X-Forwarded-For`, so rate limiting sees the real client address: a proxy hop count (`1`-`32`) or a comma-separated list of proxy IPs/CIDRs (e.g. `10.42.0.0/16`). `true`, `false`, `0` and zero-length prefixes such as `0.0.0.0/0` are refused, and **an invalid value stops the server from starting**. Leave unset if the app is not behind a proxy | *(empty, trust nothing)* |
 
 **Examples:**
@@ -255,8 +259,8 @@ Select your region (United States, Canada, United Kingdom/EU or Australia) to co
 
 ### Architecture
 - **Frontend**: React with Material-UI
-- **Backend**: Node.js with Express and Socket.io
-- **Communication**: REST API + WebSockets for real-time updates
+- **Backend**: Node.js with Express
+- **Communication**: REST API + Server-Sent Events for real-time updates
 - **HDHomeRun Integration**: Uses `hdhomerun_config` command-line tool
 
 ### Container
@@ -277,8 +281,8 @@ Select your region (United States, Canada, United Kingdom/EU or Australia) to co
 - `POST /api/devices/:id/tuner/:tuner/clear` - Clear/stop tuner
 - `GET /api/devices/:id/stream/play.m3u?ch=&program=&name=` - Download M3U playlist for a program
 - `GET /api/devices/:id/stream/url?ch=&program=` - Get raw stream URL for a program
-- WebSocket: `start-monitoring` - Begin real-time signal updates
-- WebSocket: `stop-monitoring` - Stop real-time signal updates
+- `GET /api/devices/:id/tuner/:tuner/stream` - Server-Sent Events: one `tuner-status` event per second (status, current program, ATSC 3.0 PLP and L1 info) until the client disconnects
+- `GET /api/devices/:id/antenna/stream?tuners=N` - Server-Sent Events: one `antenna-mode-status` event per second with the status of tuners `0` to `N-1` (`N` is 1 to 8)
 
 ## Development
 
@@ -297,12 +301,18 @@ To run in development mode:
    ```
 
    The Vite dev server listens on http://localhost:5173 and proxies `/api`
-   and `/socket.io` to the backend on `http://localhost:3000`. Set
+   to the backend on `http://localhost:3000`. Set
    `BACKEND_URL` to point it somewhere else.
 
 Run the tests with `npm test` in `/backend` and in `/frontend` (the frontend
 uses Vitest; `npm run test:watch` re-runs on change). `npm run build` in
 `/frontend` writes the production bundle to `frontend/build`.
+
+The backend tests are black-box: they spawn the server as a child process with a
+fake `hdhomerun_config` on `PATH`. Set `SERVER_CMD` to run them against a
+different implementation of the same HTTP contract, for example
+`SERVER_CMD=/path/to/hdhr-server npm test`. The command must print
+`running on port <n>` once it is listening.
 
 Pull requests are checked by CI: unit tests, `npm audit`, Dockerfile and workflow linting, secret scanning, dependency review, CodeQL, a Trivy scan of the built image, Helm chart validation, and a smoke test of the image under a read-only filesystem with all capabilities dropped. Pushes to `main` build, scan, publish and sign the image.
 

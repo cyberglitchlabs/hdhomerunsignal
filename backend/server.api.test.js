@@ -1,6 +1,6 @@
 const { describe, test, before, after, beforeEach } = require('node:test');
 const assert = require('node:assert/strict');
-const { startServer, request, socketConnect, sleep, waitFor } = require('./test-support');
+const { startServer, request, openStream, sleep, waitFor } = require('./test-support');
 
 const DEV = '10.0.0.5';
 const enc = encodeURIComponent;
@@ -101,33 +101,35 @@ describe('API: injection attempts never reach hdhomerun_config', () => {
     assert.deepEqual(server.calls(), []);
   });
 
-  test('Socket.IO start-monitoring / start-antenna-mode with bad payloads', async () => {
+  test('event stream subscriptions with bad parameters', async () => {
+    const enc = encodeURIComponent;
     const bad = [
-      ['start-monitoring', { deviceId: '-h', tuner: 0 }],
-      ['start-monitoring', { deviceId: 'a;id', tuner: 0 }],
-      ['start-monitoring', { deviceId: '$(id)', tuner: 0 }],
-      ['start-monitoring', { deviceId: 'badtuner1', tuner: 8 }],
-      ['start-monitoring', { deviceId: 'badtuner2', tuner: '1;2' }],
-      ['start-monitoring', { deviceId: 'badtuner3', tuner: -1 }],
-      ['start-monitoring', { deviceId: 'badtuner4' }],
-      ['start-monitoring', null],
-      ['start-antenna-mode', { deviceId: '-h', tunerCount: 2 }],
-      ['start-antenna-mode', { deviceId: 'count0', tunerCount: 0 }],
-      ['start-antenna-mode', { deviceId: 'count9', tunerCount: 9 }],
-      ['start-antenna-mode', { deviceId: 'countfrac', tunerCount: 1.5 }],
-      ['start-antenna-mode', { deviceId: 'countnan', tunerCount: 'x' }]
+      `/api/devices/-h/tuner/0/stream`,
+      `/api/devices/${enc('a;id')}/tuner/0/stream`,
+      `/api/devices/${enc('$(id)')}/tuner/0/stream`,
+      `/api/devices/badtuner1/tuner/8/stream`,
+      `/api/devices/badtuner2/tuner/${enc('1;2')}/stream`,
+      `/api/devices/badtuner3/tuner/-1/stream`,
+      `/api/devices/-h/antenna/stream?tuners=2`,
+      `/api/devices/${enc('a;id')}/antenna/stream?tuners=2`,
+      `/api/devices/count0/antenna/stream?tuners=0`,
+      `/api/devices/count9/antenna/stream?tuners=9`,
+      `/api/devices/countfrac/antenna/stream?tuners=1.5`,
+      `/api/devices/countnan/antenna/stream?tuners=x`,
+      `/api/devices/countnone/antenna/stream`
     ];
-    // One session per payload: a session can only monitor one thing at a time.
-    for (const [event, payload] of bad) {
-      const socket = await socketConnect(server.port);
-      await socket.emit(event, payload);
+    for (const path of bad) {
+      const stream = await openStream(server.port, path);
+      assert.equal(stream.status, 400, path);
+      assert.equal(stream.headers['content-type'].split(';')[0], 'application/json', path);
     }
-    // A valid request last. Once its tool calls show up, the earlier tick(s)
-    // of any wrongly accepted payload have had time to run as well.
-    const good = await socketConnect(server.port);
-    await good.emit('start-monitoring', { deviceId: 'good1', tuner: 2 });
+    // A valid subscription last. Once its tool calls show up, the earlier
+    // tick(s) of any wrongly accepted subscription have had time to run as well.
+    const good = await openStream(server.port, '/api/devices/good1/tuner/2/stream');
+    assert.equal(good.status, 200);
     await waitFor(() => server.calls().some((c) => c[0] === 'good1'), { timeout: 5000 });
     await sleep(300);
+    good.close();
 
     const calls = server.calls();
     assert.ok(calls.length > 0);

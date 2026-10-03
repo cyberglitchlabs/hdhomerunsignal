@@ -1,6 +1,6 @@
 const { describe, test, before, after } = require('node:test');
 const assert = require('node:assert/strict');
-const { startServer, request, socketHandshake, socketConnect, sleep } = require('./test-support');
+const { startServer, request, openStream, sleep } = require('./test-support');
 
 describe('origin checks', () => {
   let server;
@@ -62,41 +62,34 @@ describe('origin checks', () => {
     });
   });
 
-  describe('Socket.IO handshake', () => {
-    test('a cross-origin handshake is refused', async () => {
-      const { res, sid } = await socketHandshake(server.port, { Origin: 'https://evil.example' });
-      assert.equal(res.status, 403);
-      assert.equal(sid, undefined);
+  describe('event streams', () => {
+    const STREAM = '/api/devices/10.0.0.5/tuner/0/stream';
+    const open = async (origin) => {
+      const stream = await openStream(server.port, STREAM, { headers: origin === undefined ? {} : { Origin: origin } });
+      stream.close();
+      return stream;
+    };
+
+    test('a cross-origin subscription is refused', async () => {
+      const stream = await open('https://evil.example');
+      assert.equal(stream.status, 403);
     });
 
-    test('a same-origin handshake is accepted', async () => {
-      const { res, sid } = await socketHandshake(server.port, { Origin: `http://${host}` });
-      assert.equal(res.status, 200);
-      assert.ok(sid);
+    test('a same-origin subscription is accepted', async () => {
+      assert.equal((await open(`http://${host}`)).status, 200);
     });
 
     test('an allowlisted origin is accepted', async () => {
-      const { res, sid } = await socketHandshake(server.port, { Origin: 'https://dash.example' });
-      assert.equal(res.status, 200);
-      assert.ok(sid);
+      assert.equal((await open('https://dash.example')).status, 200);
     });
 
     test('a client without an Origin header is accepted', async () => {
-      const { res, sid } = await socketHandshake(server.port);
-      assert.equal(res.status, 200);
-      assert.ok(sid);
+      assert.equal((await open()).status, 200);
     });
 
     test('a refused origin cannot start monitoring', async () => {
-      const refused = await socketHandshake(server.port, { Origin: 'https://evil.example' });
-      assert.equal(refused.res.status, 403);
-      const attempt = await request(server.port, {
-        method: 'POST',
-        path: '/socket.io/?EIO=4&transport=polling&sid=forged',
-        headers: { Origin: 'https://evil.example', 'Content-Type': 'text/plain' },
-        body: '42["start-monitoring",{"deviceId":"evilhost","tuner":0}]'
-      });
-      assert.notEqual(attempt.status, 200);
+      const stream = await openStream(server.port, '/api/devices/evilhost/tuner/0/stream', { headers: { Origin: 'https://evil.example' } });
+      assert.equal(stream.status, 403);
       await sleep(1300);
       assert.ok(!server.calls().some((c) => c[0] === 'evilhost'));
     });
@@ -110,8 +103,10 @@ describe('origin checks without an allowlist', () => {
     const get = (origin) => request(server.port, { path: '/api/version', headers: { Origin: origin } });
     assert.equal((await get(`http://127.0.0.1:${server.port}`)).status, 200);
     assert.equal((await get('https://dash.example')).status, 403);
-    assert.equal((await socketHandshake(server.port, { Origin: 'https://dash.example' })).res.status, 403);
-    const socket = await socketConnect(server.port);
-    assert.ok(socket.sid);
+    const refused = await openStream(server.port, '/api/devices/10.0.0.5/tuner/0/stream', { headers: { Origin: 'https://dash.example' } });
+    assert.equal(refused.status, 403);
+    const accepted = await openStream(server.port, '/api/devices/10.0.0.5/tuner/0/stream');
+    accepted.close();
+    assert.equal(accepted.status, 200);
   });
 });

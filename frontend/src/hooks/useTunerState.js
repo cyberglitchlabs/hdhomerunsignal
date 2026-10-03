@@ -10,7 +10,7 @@ export function deriveAtsc3State(status) {
 }
 
 /**
- * The live tuner status pushed over the socket, plus the ATSC 3.0 details
+ * The live tuner status pushed over the event stream, plus the ATSC 3.0 details
  * (PLP and L1 info) that come with it.
  */
 export function useTunerState() {

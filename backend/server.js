@@ -1,7 +1,6 @@
 const express = require('express');
-const { createServer } = require('http');
-const { Server } = require('socket.io');
 const { execFile } = require('child_process');
+const http = require('http');
 const https = require('https');
 const path = require('path');
 const rateLimit = require('express-rate-limit');
@@ -17,14 +16,18 @@ function hdhr(args, options, callback) {
   return execFile('hdhomerun_config', args, options, callback);
 }
 
+// Where the cloud discovery fallback looks devices up. Overridable so tests (and
+// any non-Node build of this server) can point it at a local stub.
+const CLOUD_DISCOVERY_URL = process.env.HDHR_CLOUD_DISCOVERY_URL || 'https://ipv4-api.hdhomerun.com/discover';
+
 // The frontend is served by this server, so cross-origin access is off unless
 // origins are explicitly allowed (comma-separated) via HDHR_ALLOWED_ORIGINS.
 const allowedOrigins = new Set(
   (process.env.HDHR_ALLOWED_ORIGINS || '').split(',').map(o => o.trim()).filter(Boolean)
 );
 
-// Browsers do not enforce CORS on WebSockets, so check Origin ourselves:
-// no Origin (non-browser client), same host, or an allowlisted origin.
+// Browsers do not enforce CORS on every kind of request, so check Origin
+// ourselves: no Origin (non-browser client), same host, or an allowlisted origin.
 function isOriginAllowed(origin, host) {
   if (!origin) return true;
   if (allowedOrigins.has(origin)) return true;
@@ -35,13 +38,11 @@ function isOriginAllowed(origin, host) {
   }
 }
 
+// How often each stream's tuner status is refreshed.
+const MONITOR_INTERVAL_MS = 1000;
+
 const app = express();
-const server = createServer(app);
-const io = new Server(server, {
-  allowRequest: (req, callback) => {
-    callback(null, isOriginAllowed(req.headers.origin, req.headers.host));
-  }
-});
+const server = http.createServer(app);
 
 app.disable('x-powered-by');
 
@@ -60,6 +61,7 @@ app.set('trust proxy', trustProxy.value);
 // client address. HDHR_RATE_LIMIT is requests per minute (0 disables). Without
 // HDHR_TRUST_PROXY, clients behind a reverse proxy all share the proxy's address
 // and therefore one bucket; the default is generous enough for that.
+const STREAM_PATH = /^\/api\/devices\/[^/]+\/(tuner\/[^/]+|antenna)\/stream$/;
 const rateLimitPerMinute = Number.parseInt(process.env.HDHR_RATE_LIMIT || '300', 10);
 const tooManyRequests = (req, res) => res.status(429).json({ error: 'Too many requests' });
 const generalLimiter = rateLimit({
@@ -68,7 +70,9 @@ const generalLimiter = rateLimit({
   standardHeaders: 'draft-7',
   legacyHeaders: false,
   handler: tooManyRequests,
-  skip: () => rateLimitPerMinute <= 0
+  // Event streams are long-lived and EventSource never retries after a 429, so
+  // they are bounded by the concurrent-stream cap below instead.
+  skip: (req) => rateLimitPerMinute <= 0 || STREAM_PATH.test(req.path)
 });
 // A channel scan occupies a tuner for up to a minute, so it gets a tight limit.
 const scanLimiter = rateLimit({
@@ -101,7 +105,7 @@ class HDHomeRunController {
     this.devices = [];
     this.activeDevice = null;
     this.activeTuner = 0;
-    this.monitoringIntervals = new Map(); // Per-socket monitoring intervals
+    this.monitoringIntervals = new Map(); // Stop functions for each stream's poller, keyed by client id
     this.plpUnavailableLogged = new Set(); // Devices already reported as lacking PLP info
     this.deviceNameCache = new Map(); // Cache for device name lookups
     this.cacheTTL = 5 * 60 * 1000; // 5 minute TTL
@@ -230,7 +234,7 @@ class HDHomeRunController {
 
   async httpDiscoverDevices() {
     return new Promise((resolve) => {
-      const req = https.get('https://ipv4-api.hdhomerun.com/discover', (res) => {
+      const req = (CLOUD_DISCOVERY_URL.startsWith('https:') ? https : http).get(CLOUD_DISCOVERY_URL, (res) => {
         let data = '';
         res.on('data', chunk => { data += chunk; });
         res.on('end', () => {
@@ -842,75 +846,79 @@ class HDHomeRunController {
     });
   }
 
-  startMonitoring(socket, deviceId, tuner) {
-    this.stopMonitoring(socket);
+  // Polls once a second for one client: the first reading goes out right away,
+  // and the next poll starts a second after the previous one began, but never
+  // before it has finished, so a hung tool call cannot pile up processes.
+  // poll() resolves to the { event, data } to send, or throws to skip a tick.
+  startPolling(client, poll, errorLabel) {
+    this.stopMonitoring(client);
 
-    const intervalId = setInterval(async () => {
+    let stopped = false;
+    let timer = null;
+    const run = async () => {
+      const startedAt = Date.now();
       try {
-        const status = await this.getTunerStatus(deviceId, tuner);
-        const currentProgram = await this.getCurrentProgram(deviceId, tuner);
-
-        // Get ATSC 3.0 info if channel is tuned and device supports it
-        let plpInfo = null;
-        let l1Info = null;
-        if (status && status.channel && status.channel !== 'none') {
-          // Try to get ATSC 3.0 info - will return null if not ATSC 3.0
-          plpInfo = await this.getPlpInfo(deviceId, tuner);
-          l1Info = await this.getL1Info(deviceId, tuner);
-        }
-
-        socket.emit('tuner-status', {
-          ...status,
-          currentProgram,
-          plpInfo,
-          l1Info
-        });
+        const message = await poll();
+        if (!stopped) client.emit(message.event, message.data);
       } catch (error) {
-        console.error('Monitoring error:', error);
+        console.error(errorLabel, error);
       }
-    }, 1000);
-
-    this.monitoringIntervals.set(socket.id, intervalId);
+      if (!stopped) timer = setTimeout(run, Math.max(0, MONITOR_INTERVAL_MS - (Date.now() - startedAt)));
+    };
+    this.monitoringIntervals.set(client.id, () => {
+      stopped = true;
+      clearTimeout(timer);
+    });
+    run();
   }
 
-  startAntennaMode(socket, deviceId, tunerCount) {
-    this.stopMonitoring(socket);
+  startMonitoring(client, deviceId, tuner) {
+    this.startPolling(client, async () => {
+      const status = await this.getTunerStatus(deviceId, tuner);
+      const currentProgram = await this.getCurrentProgram(deviceId, tuner);
 
-    console.log(`Starting antenna mode for device ${deviceId} with ${tunerCount} tuners`);
-
-    const intervalId = setInterval(async () => {
-      try {
-        // Monitor all tuners simultaneously
-        const allTunersData = await Promise.all(
-          Array.from({ length: tunerCount }, (_, i) =>
-            this.getTunerStatus(deviceId, i)
-              .then(status => ({ tuner: i, status }))
-              .catch(error => {
-                console.error(`Error monitoring tuner ${i}:`, error);
-                return { tuner: i, status: null };
-              })
-          )
-        );
-
-        socket.emit('antenna-mode-status', allTunersData);
-      } catch (error) {
-        console.error('Antenna mode monitoring error:', error);
+      // Get ATSC 3.0 info if channel is tuned and device supports it
+      let plpInfo = null;
+      let l1Info = null;
+      if (status && status.channel && status.channel !== 'none') {
+        // Try to get ATSC 3.0 info - will return null if not ATSC 3.0
+        plpInfo = await this.getPlpInfo(deviceId, tuner);
+        l1Info = await this.getL1Info(deviceId, tuner);
       }
-    }, 1000);
 
-    this.monitoringIntervals.set(socket.id, intervalId);
+      return { event: 'tuner-status', data: { ...status, currentProgram, plpInfo, l1Info } };
+    }, 'Monitoring error:');
   }
 
-  stopMonitoring(socket) {
-    const socketId = socket?.id;
-    if (socketId && this.monitoringIntervals.has(socketId)) {
-      clearInterval(this.monitoringIntervals.get(socketId));
-      this.monitoringIntervals.delete(socketId);
+  startAntennaMode(client, deviceId, tunerCount) {
+    console.log('Starting antenna mode for device %s with %d tuners', validate.logSafe(deviceId), tunerCount);
+
+    this.startPolling(client, async () => {
+      // Monitor all tuners simultaneously
+      const allTunersData = await Promise.all(
+        Array.from({ length: tunerCount }, (_, i) =>
+          this.getTunerStatus(deviceId, i)
+            .then(status => ({ tuner: i, status }))
+            .catch(error => {
+              console.error(`Error monitoring tuner ${i}:`, error);
+              return { tuner: i, status: null };
+            })
+        )
+      );
+      return { event: 'antenna-mode-status', data: allTunersData };
+    }, 'Antenna mode monitoring error:');
+  }
+
+  stopMonitoring(client) {
+    const clientId = client?.id;
+    if (clientId && this.monitoringIntervals.has(clientId)) {
+      this.monitoringIntervals.get(clientId)();
+      this.monitoringIntervals.delete(clientId);
     }
   }
 
   stopAllMonitoring() {
-    this.monitoringIntervals.forEach(intervalId => clearInterval(intervalId));
+    this.monitoringIntervals.forEach(stop => stop());
     this.monitoringIntervals.clear();
   }
 }
@@ -1135,34 +1143,77 @@ ${streamUrl}
   }
 });
 
-// Socket.IO for real-time updates
-io.on('connection', (socket) => {
-  console.log('Client connected:', socket.id);
+// Real-time updates are Server-Sent Events: a subscription is a GET, and closing
+// the connection ends it. The browser's EventSource reconnects on its own, which
+// starts a fresh subscription, so nothing needs to be restarted on the client.
+const KEEPALIVE_MS = 15000;
+const openStreams = new Set();
+// Every open stream keeps tool calls running, so each client address may hold
+// only so many at once (0 disables the cap).
+const maxStreamsPerClient = Number.parseInt(process.env.HDHR_MAX_STREAMS_PER_CLIENT || '16', 10);
+const streamsByClient = new Map();
+let nextStreamId = 1;
 
-  socket.on('start-monitoring', (payload) => {
-    const deviceId = validate.deviceHost(payload && payload.deviceId);
-    const tuner = validate.tuner(payload && payload.tuner);
-    if (!deviceId || tuner === null) return;
-    console.log(`Starting monitoring for device ${deviceId}, tuner ${tuner}`);
-    hdhrController.startMonitoring(socket, deviceId, tuner);
-  });
+// Opens an event stream on res and returns the controller-facing client:
+// { id, emit(event, data) }. onClose runs once when the stream ends, whichever
+// side ended it.
+function openEventStream(req, res, onClose) {
+  const clientAddress = req.ip;
+  const held = streamsByClient.get(clientAddress) || 0;
+  if (maxStreamsPerClient > 0 && held >= maxStreamsPerClient) {
+    res.status(429).json({ error: 'Too many open streams' });
+    return null;
+  }
+  streamsByClient.set(clientAddress, held + 1);
 
-  socket.on('start-antenna-mode', (payload) => {
-    const deviceId = validate.deviceHost(payload && payload.deviceId);
-    const tunerCount = Number(payload && payload.tunerCount);
-    if (!deviceId || !Number.isInteger(tunerCount) || tunerCount < 1 || tunerCount > 8) return;
-    hdhrController.startAntennaMode(socket, deviceId, tunerCount);
+  res.status(200).set({
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache, no-transform',
+    'X-Accel-Buffering': 'no' // nginx would otherwise buffer the stream
   });
+  res.flushHeaders();
+  // Reconnect quickly if the connection drops (the default is a few seconds).
+  res.write('retry: 1000\n\n');
 
-  socket.on('stop-monitoring', () => {
-    console.log('Stopping monitoring for:', socket.id);
-    hdhrController.stopMonitoring(socket);
-  });
+  const client = {
+    id: `stream-${nextStreamId++}`,
+    emit: (event, data) => res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`)
+  };
+  // Comment lines keep idle proxies from closing the connection.
+  const keepalive = setInterval(() => res.write(': keepalive\n\n'), KEEPALIVE_MS);
 
-  socket.on('disconnect', () => {
-    console.log('Client disconnected:', socket.id);
-    hdhrController.stopMonitoring(socket);
+  const entry = { res };
+  openStreams.add(entry);
+  res.on('close', () => {
+    clearInterval(keepalive);
+    openStreams.delete(entry);
+    const remaining = streamsByClient.get(clientAddress) - 1;
+    if (remaining > 0) streamsByClient.set(clientAddress, remaining);
+    else streamsByClient.delete(clientAddress);
+    onClose(client);
   });
+  return client;
+}
+
+app.get('/api/devices/:id/tuner/:tuner/stream', (req, res) => {
+  const { id: deviceId, tuner } = req.params;
+  console.log('Starting monitoring for device %s, tuner %s', validate.logSafe(deviceId), validate.logSafe(String(tuner)));
+  const client = openEventStream(req, res, (c) => {
+    console.log('Stopping monitoring for:', c.id);
+    hdhrController.stopMonitoring(c);
+  });
+  if (!client) return;
+  hdhrController.startMonitoring(client, deviceId, tuner);
+});
+
+app.get('/api/devices/:id/antenna/stream', (req, res) => {
+  const tunerCount = Number(req.query.tuners);
+  if (!Number.isInteger(tunerCount) || tunerCount < 1 || tunerCount > 8) {
+    return res.status(400).json({ error: 'Invalid tuners' });
+  }
+  const client = openEventStream(req, res, (c) => hdhrController.stopMonitoring(c));
+  if (!client) return;
+  hdhrController.startAntennaMode(client, req.params.id, tunerCount);
 });
 
 // Version endpoint for update checking
@@ -1211,8 +1262,13 @@ function shutdown(signal) {
   }, SHUTDOWN_TIMEOUT_MS).unref();
 
   hdhrController.stopAllMonitoring();
-  io.close(() => process.exit(0));
+  server.close(() => process.exit(0));
   server.closeIdleConnections();
+  // Open event streams never go idle: end them, and drop each connection once
+  // its response has been flushed.
+  for (const { res } of openStreams) {
+    res.end(() => res.socket && res.socket.destroy());
+  }
 }
 
 ['SIGTERM', 'SIGINT'].forEach(signal => process.on(signal, () => shutdown(signal)));
