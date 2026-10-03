@@ -17,12 +17,17 @@ jobs:
     timeout-minutes: 10
     permissions:
       contents: read
+    env:
+      ACTIONLINT_IMAGE: rhysd/actionlint@sha256:b1934ee5f1c509618f2508e6eb47ee0d3520686341fec936f3b79331f9315667
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - uses: ./.github/actions/pull-image
+        with:
+          image: ${{ env.ACTIONLINT_IMAGE }}
       - name: actionlint
-        run: docker run --rm -v "$PWD:/repo" -w /repo rhysd/actionlint@sha256:b1934ee5f1c509618f2508e6eb47ee0d3520686341fec936f3b79331f9315667 -color
+        run: docker run --rm -v "$PWD:/repo" -w /repo "$ACTIONLINT_IMAGE" -color
       - name: zizmor
         uses: zizmorcore/zizmor-action@cc914d7f3750a2d13d75c7f184a1060aa0e9d482 # v0.6.4
         with:
@@ -77,14 +82,19 @@ jobs:
     timeout-minutes: 5
     permissions:
       contents: read
+    env:
+      HADOLINT_IMAGE: hadolint/hadolint@sha256:32dac94127fd60b7b7e3fbfc65e1383b9b5e25c9bfd7b8536de7a539fe68a12d
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - uses: ./.github/actions/pull-image
+        with:
+          image: ${{ env.HADOLINT_IMAGE }}
       - name: hadolint
         run: >
           docker run --rm -i -v "$PWD/.hadolint.yaml:/.config/hadolint.yaml:ro"
-          hadolint/hadolint@sha256:32dac94127fd60b7b7e3fbfc65e1383b9b5e25c9bfd7b8536de7a539fe68a12d
+          "$HADOLINT_IMAGE"
           < Dockerfile
 
   secrets:
@@ -93,15 +103,20 @@ jobs:
     timeout-minutes: 10
     permissions:
       contents: read
+    env:
+      GITLEAKS_IMAGE: zricethezav/gitleaks@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           persist-credentials: false
+      - uses: ./.github/actions/pull-image
+        with:
+          image: ${{ env.GITLEAKS_IMAGE }}
       - name: gitleaks
         run: >
           docker run --rm -v "$PWD:/repo"
-          zricethezav/gitleaks@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f
+          "$GITLEAKS_IMAGE"
           git /repo --redact --no-banner
 
   dependency-review:
@@ -164,10 +179,19 @@ jobs:
     timeout-minutes: 15
     permissions:
       contents: read
+    env:
+      KUBECONFORM_IMAGE: ghcr.io/yannh/kubeconform@sha256:faffaf43f95aa6425306e1ab8d6fcad72acb9049158f38e574c085ea1ec0f64e
+      KUBELINTER_IMAGE: ghcr.io/stackrox/kube-linter@sha256:f2bfce7879206d32f69ab6572c376f916643f54ca291ac38cf7d01ef591ff3f9
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - uses: ./.github/actions/pull-image
+        with:
+          image: ${{ env.KUBECONFORM_IMAGE }}
+      - uses: ./.github/actions/pull-image
+        with:
+          image: ${{ env.KUBELINTER_IMAGE }}
       - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
         with:
           version: v4.3.0
@@ -190,12 +214,12 @@ jobs:
       - name: kubeconform
         run: >
           docker run --rm -v "$PWD/rendered:/m:ro"
-          ghcr.io/yannh/kubeconform@sha256:faffaf43f95aa6425306e1ab8d6fcad72acb9049158f38e574c085ea1ec0f64e
+          "$KUBECONFORM_IMAGE"
           -strict -summary /m/secure /m/hostnetwork
       - name: kube-linter (default deployment)
         run: >
           docker run --rm -v "$PWD/rendered:/m:ro"
-          ghcr.io/stackrox/kube-linter@sha256:f2bfce7879206d32f69ab6572c376f916643f54ca291ac38cf7d01ef591ff3f9
+          "$KUBELINTER_IMAGE"
           lint /m/secure
       - name: Trivy misconfiguration scan (default deployment)
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0

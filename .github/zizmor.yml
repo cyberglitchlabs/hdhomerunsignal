@@ -1,0 +1,7 @@
+rules:
+  self-repository:
+    # zizmor prefers `uses: $/...` for in-repo actions, but the pinned actionlint
+    # (1.7.12, the latest release) rejects that syntax ("ref is missing"). Keep
+    # the workspace-relative form in ci.yml until actionlint supports `$/`.
+    ignore:
+      - ci.yml
