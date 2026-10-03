@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Box, Grid } from '@mui/material';
 import AntennaMode from './AntennaMode';
 import Atsc3Panels from './signal/Atsc3Panels';
@@ -10,7 +10,7 @@ import StreamContextMenu from './signal/StreamContextMenu';
 import TunerMeters from './signal/TunerMeters';
 import TunerSettings from './signal/TunerSettings';
 import { useChannelControl } from '../hooks/useChannelControl';
-import { useDevices } from '../hooks/useDevices';
+import { clampTuner, useDevices } from '../hooks/useDevices';
 import { useInstallPrompt } from '../hooks/useInstallPrompt';
 import { useMonitoring } from '../hooks/useMonitoring';
 import { useRegion } from '../hooks/useRegion';
@@ -22,7 +22,7 @@ import { getChannelRange } from '../utils/channels';
 
 function SignalMeter() {
   const { region, channelMap, setChannelMap, changeRegion } = useRegion();
-  const { devices, selectedDevice, setSelectedDevice, deviceInfo, loading, discoverDevices, getDeviceInfo } = useDevices();
+  const { devices, selectedDevice, selectDevice, deviceInfo, loading, discoverDevices } = useDevices();
   const [selectedTuner, setSelectedTuner] = useState(0);
   const [antennaMode, setAntennaMode] = useState(false);
   const [allTunersData, setAllTunersData] = useState([]);
@@ -56,26 +56,18 @@ function SignalMeter() {
     directChannel,
     setDirectChannel,
     currentChannelPrograms,
-    resetChannelData,
     tuneToDirectChannel,
     incrementChannel,
     decrementChannel,
     clearTuner
   } = useChannelControl({ selectedDevice, selectedTuner, region, channelMap, tunerStatus, clearAtsc3Info });
 
-  const handleDeviceChange = async (newDeviceId) => {
-    setSelectedDevice(newDeviceId);
-
-    // Clear old channel data when switching devices
-    resetChannelData();
-
-    // Get info for new device and adjust tuner if needed
-    const info = await getDeviceInfo(newDeviceId);
-    if (info && selectedTuner >= info.tuners) {
-      // Current tuner doesn't exist on new device - switch to highest tuner
-      setSelectedTuner(info.tuners - 1);
-    }
-  };
+  // Whichever way the device changed (picker, Refresh, discovery), move off a
+  // tuner the new device doesn't have. Channel data is reset by useChannelControl.
+  useEffect(() => {
+    const tuner = clampTuner(selectedTuner, deviceInfo);
+    if (tuner !== selectedTuner) setSelectedTuner(tuner);
+  }, [deviceInfo, selectedTuner]);
 
   const showTunerPanels = !antennaMode && selectedDevice;
 
@@ -87,7 +79,7 @@ function SignalMeter() {
           onRegionChange={changeRegion}
           devices={devices}
           selectedDevice={selectedDevice}
-          onDeviceChange={handleDeviceChange}
+          onDeviceChange={selectDevice}
           onRefresh={() => discoverDevices(true)}
           loading={loading}
           deviceInfo={deviceInfo}

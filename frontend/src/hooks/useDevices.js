@@ -1,43 +1,59 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import axios from 'axios';
+import { createCancelGate } from '../utils/cancelGate';
+
+/**
+ * Which device to show after a discovery: the current one while it is still
+ * online, otherwise the first online one, or null when none is.
+ */
+export function chooseDevice(devices, currentId) {
+  const online = devices.filter(d => d.online !== false);
+  return online.find(d => d.id === currentId) || online[0] || null;
+}
+
+/** The tuner to use on a device: the current one, or the last one if it doesn't have that many. */
+export function clampTuner(tuner, deviceInfo) {
+  if (deviceInfo && tuner >= deviceInfo.tuners) return Math.max(deviceInfo.tuners - 1, 0);
+  return tuner;
+}
 
 /**
  * The devices on the network and the one being viewed. Discovers on mount and
- * selects the first online device; discoverDevices(true) forces a fresh lookup.
+ * selects the first online device; discoverDevices(true) forces a fresh lookup
+ * and keeps the current device while it is still online.
  */
 export function useDevices() {
   const [devices, setDevices] = useState([]);
   const [selectedDevice, setSelectedDevice] = useState('');
   const [deviceInfo, setDeviceInfo] = useState(null);
   const [loading, setLoading] = useState(false);
+  // The selection as discoverDevices sees it, even before React re-renders
+  const selectedRef = useRef('');
+  const [infoGate] = useState(createCancelGate);
 
-  const discoverDevices = async (force = false) => {
-    setLoading(true);
-    try {
-      const url = force ? '/api/devices?force=true' : '/api/devices';
-      const response = await axios.get(url);
-      setDevices(response.data);
-      // Auto-select first online device
-      const firstOnlineDevice = response.data.find(d => d.online !== false);
-      if (firstOnlineDevice) {
-        setSelectedDevice(firstOnlineDevice.id);
-        await getDeviceInfo(firstOnlineDevice.id);
-      } else if (response.data.length > 0) {
-        // All devices offline - clear selection
-        setSelectedDevice('');
-        setDeviceInfo(null);
-      }
-    } catch (error) {
-      console.error('Failed to discover devices:', error);
-    }
-    setLoading(false);
+  const clearSelection = () => {
+    infoGate.cancel();
+    selectedRef.current = '';
+    setSelectedDevice('');
+    setDeviceInfo(null);
   };
 
-  const getDeviceInfo = async (deviceId) => {
+  // Switch to a device and load its info. Only the latest request's info is
+  // used, so a slow response for a device the user left is ignored.
+  const selectDevice = async (deviceId) => {
+    infoGate.cancel();
+    const isCurrent = infoGate.start();
+    if (deviceId !== selectedRef.current) {
+      // The old device's info does not describe the new one
+      setDeviceInfo(null);
+    }
+    selectedRef.current = deviceId;
+    setSelectedDevice(deviceId);
+
     try {
       const response = await axios.get(`/api/devices/${deviceId}/info`);
       console.log('Device info received:', response.data);
-      setDeviceInfo(response.data);
+      if (isCurrent()) setDeviceInfo(response.data);
       return response.data;
     } catch (error) {
       console.error('Failed to get device info:', error);
@@ -45,9 +61,28 @@ export function useDevices() {
     }
   };
 
+  const discoverDevices = async (force = false) => {
+    setLoading(true);
+    try {
+      const url = force ? '/api/devices?force=true' : '/api/devices';
+      const response = await axios.get(url);
+      setDevices(response.data);
+      const chosen = chooseDevice(response.data, selectedRef.current);
+      if (chosen) {
+        await selectDevice(chosen.id);
+      } else if (response.data.length > 0) {
+        // All devices offline - clear selection
+        clearSelection();
+      }
+    } catch (error) {
+      console.error('Failed to discover devices:', error);
+    }
+    setLoading(false);
+  };
+
   useEffect(() => {
     discoverDevices();
   }, []);
 
-  return { devices, selectedDevice, setSelectedDevice, deviceInfo, loading, discoverDevices, getDeviceInfo };
+  return { devices, selectedDevice, selectDevice, deviceInfo, loading, discoverDevices };
 }
