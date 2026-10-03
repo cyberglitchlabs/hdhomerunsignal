@@ -1,4 +1,4 @@
-const CACHE_NAME = 'hdhr-monitor-musypbbv-2c2eb496';
+const CACHE_NAME = 'hdhr-monitor-v3';
 const urlsToCache = [
   '/',
   '/manifest.json',

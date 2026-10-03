@@ -1,6 +1,6 @@
 const { describe, test, before, after } = require('node:test');
 const assert = require('node:assert/strict');
-const { startServer, openStream, sleep, waitFor } = require('./test-support');
+const { startServer, openStream, request, sleep, waitFor } = require('./test-support');
 
 describe('event streams', () => {
   let server;
@@ -78,5 +78,56 @@ describe('event streams with a slow tuner', () => {
     // Overlapping ticks would have started a status call every second (4 by now).
     const statusCalls = server.calls().filter((c) => /\/status$/.test(c[2])).length;
     assert.ok(statusCalls <= 2, `${statusCalls} status calls in 3.5 s`);
+  });
+});
+
+describe('event stream limits', () => {
+  test('streams are not counted against the request rate limit', async (t) => {
+    const server = await startServer({ HDHR_RATE_LIMIT: '2' });
+    t.after(() => server.stop());
+    // EventSource never retries after a 429, so reconnecting must always work.
+    for (let i = 0; i < 6; i++) {
+      const stream = await openStream(server.port, '/api/devices/limit1/tuner/0/stream');
+      assert.equal(stream.status, 200, `connection ${i}`);
+      stream.close();
+      await stream.closed;
+    }
+    // Ordinary requests are still limited.
+    const statuses = [];
+    for (let i = 0; i < 4; i++) statuses.push((await request(server.port, { path: '/api/version' })).status);
+    assert.ok(statuses.includes(429), statuses.join());
+  });
+
+  test('a client can only hold so many streams at once, and closing one frees a slot', async (t) => {
+    const server = await startServer({ HDHR_MAX_STREAMS_PER_CLIENT: '2' });
+    t.after(() => server.stop());
+    const open = () => openStream(server.port, '/api/devices/limit2/tuner/0/stream');
+    const a = await open();
+    const b = await open();
+    t.after(() => { a.close(); b.close(); });
+    assert.equal(a.status, 200);
+    assert.equal(b.status, 200);
+
+    const refused = await open();
+    assert.equal(refused.status, 429);
+
+    a.close();
+    await a.closed;
+    // The server notices the close asynchronously, so allow a moment.
+    let reopened;
+    for (let i = 0; i < 40 && !(reopened && reopened.status === 200); i++) {
+      if (reopened) await sleep(50);
+      reopened = await open();
+    }
+    t.after(() => reopened.close());
+    assert.equal(reopened.status, 200);
+  });
+
+  test('HDHR_MAX_STREAMS_PER_CLIENT=0 removes the cap', async (t) => {
+    const server = await startServer({ HDHR_MAX_STREAMS_PER_CLIENT: '0' });
+    const streams = [];
+    t.after(async () => { streams.forEach((s) => s.close()); await server.stop(); });
+    for (let i = 0; i < 20; i++) streams.push(await openStream(server.port, '/api/devices/limit3/tuner/0/stream'));
+    assert.ok(streams.every((s) => s.status === 200));
   });
 });

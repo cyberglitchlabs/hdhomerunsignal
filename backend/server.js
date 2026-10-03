@@ -61,6 +61,7 @@ app.set('trust proxy', trustProxy.value);
 // client address. HDHR_RATE_LIMIT is requests per minute (0 disables). Without
 // HDHR_TRUST_PROXY, clients behind a reverse proxy all share the proxy's address
 // and therefore one bucket; the default is generous enough for that.
+const STREAM_PATH = /^\/api\/devices\/[^/]+\/(tuner\/[^/]+|antenna)\/stream$/;
 const rateLimitPerMinute = Number.parseInt(process.env.HDHR_RATE_LIMIT || '300', 10);
 const tooManyRequests = (req, res) => res.status(429).json({ error: 'Too many requests' });
 const generalLimiter = rateLimit({
@@ -69,7 +70,9 @@ const generalLimiter = rateLimit({
   standardHeaders: 'draft-7',
   legacyHeaders: false,
   handler: tooManyRequests,
-  skip: () => rateLimitPerMinute <= 0
+  // Event streams are long-lived and EventSource never retries after a 429, so
+  // they are bounded by the concurrent-stream cap below instead.
+  skip: (req) => rateLimitPerMinute <= 0 || STREAM_PATH.test(req.path)
 });
 // A channel scan occupies a tuner for up to a minute, so it gets a tight limit.
 const scanLimiter = rateLimit({
@@ -888,7 +891,7 @@ class HDHomeRunController {
   }
 
   startAntennaMode(client, deviceId, tunerCount) {
-    console.log(`Starting antenna mode for device ${deviceId} with ${tunerCount} tuners`);
+    console.log('Starting antenna mode for device %s with %d tuners', validate.logSafe(deviceId), tunerCount);
 
     this.startPolling(client, async () => {
       // Monitor all tuners simultaneously
@@ -1145,12 +1148,24 @@ ${streamUrl}
 // starts a fresh subscription, so nothing needs to be restarted on the client.
 const KEEPALIVE_MS = 15000;
 const openStreams = new Set();
+// Every open stream keeps tool calls running, so each client address may hold
+// only so many at once (0 disables the cap).
+const maxStreamsPerClient = Number.parseInt(process.env.HDHR_MAX_STREAMS_PER_CLIENT || '16', 10);
+const streamsByClient = new Map();
 let nextStreamId = 1;
 
 // Opens an event stream on res and returns the controller-facing client:
 // { id, emit(event, data) }. onClose runs once when the stream ends, whichever
 // side ended it.
-function openEventStream(res, onClose) {
+function openEventStream(req, res, onClose) {
+  const clientAddress = req.ip;
+  const held = streamsByClient.get(clientAddress) || 0;
+  if (maxStreamsPerClient > 0 && held >= maxStreamsPerClient) {
+    res.status(429).json({ error: 'Too many open streams' });
+    return null;
+  }
+  streamsByClient.set(clientAddress, held + 1);
+
   res.status(200).set({
     'Content-Type': 'text/event-stream',
     'Cache-Control': 'no-cache, no-transform',
@@ -1172,6 +1187,9 @@ function openEventStream(res, onClose) {
   res.on('close', () => {
     clearInterval(keepalive);
     openStreams.delete(entry);
+    const remaining = streamsByClient.get(clientAddress) - 1;
+    if (remaining > 0) streamsByClient.set(clientAddress, remaining);
+    else streamsByClient.delete(clientAddress);
     onClose(client);
   });
   return client;
@@ -1179,11 +1197,12 @@ function openEventStream(res, onClose) {
 
 app.get('/api/devices/:id/tuner/:tuner/stream', (req, res) => {
   const { id: deviceId, tuner } = req.params;
-  console.log(`Starting monitoring for device ${deviceId}, tuner ${tuner}`);
-  const client = openEventStream(res, (c) => {
+  console.log('Starting monitoring for device %s, tuner %s', validate.logSafe(deviceId), validate.logSafe(String(tuner)));
+  const client = openEventStream(req, res, (c) => {
     console.log('Stopping monitoring for:', c.id);
     hdhrController.stopMonitoring(c);
   });
+  if (!client) return;
   hdhrController.startMonitoring(client, deviceId, tuner);
 });
 
@@ -1192,7 +1211,8 @@ app.get('/api/devices/:id/antenna/stream', (req, res) => {
   if (!Number.isInteger(tunerCount) || tunerCount < 1 || tunerCount > 8) {
     return res.status(400).json({ error: 'Invalid tuners' });
   }
-  const client = openEventStream(res, (c) => hdhrController.stopMonitoring(c));
+  const client = openEventStream(req, res, (c) => hdhrController.stopMonitoring(c));
+  if (!client) return;
   hdhrController.startAntennaMode(client, req.params.id, tunerCount);
 });
 

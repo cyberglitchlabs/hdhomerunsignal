@@ -203,6 +203,7 @@ Perfect for aligning your antenna for optimal signal reception:
 | `HDHR_CLOUD_DISCOVERY_URL` | URL of the cloud discovery lookup. Meant for tests and alternative backends that need to stub it; `http://` and `https://` both work | `https://ipv4-api.hdhomerun.com/discover` |
 | `HDHR_ALLOWED_ORIGINS` | Comma-separated browser origins (e.g. `https://hdhr.example.com`) allowed to call the API cross-origin. Only needed if the UI is served from a different origin than the API | *(empty, same-origin only)* |
 | `HDHR_RATE_LIMIT` | Requests per minute allowed per client address (channel scans have a separate, stricter limit). `0` disables limiting | `300` |
+| `HDHR_MAX_STREAMS_PER_CLIENT` | How many real-time event streams one client address may hold open at once. Streams are not counted by `HDHR_RATE_LIMIT`, because a browser never retries a stream refused with 429. `0` removes the cap | `16` |
 | `HDHR_TRUST_PROXY` | Which reverse proxies may set `X-Forwarded-For`, so rate limiting sees the real client address: a proxy hop count (`1`-`32`) or a comma-separated list of proxy IPs/CIDRs (e.g. `10.42.0.0/16`). `true`, `false`, `0` and zero-length prefixes such as `0.0.0.0/0` are refused, and **an invalid value stops the server from starting**. Leave unset if the app is not behind a proxy | *(empty, trust nothing)* |
 
 **Examples:**
