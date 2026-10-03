@@ -293,10 +293,16 @@ To run in development mode:
 2. **Frontend** (in `/frontend` directory):
    ```bash
    npm ci
-   npm start
+   npm run dev
    ```
 
-Run the backend tests with `npm test` in `/backend`.
+   The Vite dev server listens on http://localhost:5173 and proxies `/api`
+   and `/socket.io` to the backend on `http://localhost:3000`. Set
+   `BACKEND_URL` to point it somewhere else.
+
+Run the tests with `npm test` in `/backend` and in `/frontend` (the frontend
+uses Vitest; `npm run test:watch` re-runs on change). `npm run build` in
+`/frontend` writes the production bundle to `frontend/build`.
 
 Pull requests are checked by CI: unit tests, `npm audit`, Dockerfile and workflow linting, secret scanning, dependency review, CodeQL, a Trivy scan of the built image, Helm chart validation, and a smoke test of the image under a read-only filesystem with all capabilities dropped. Pushes to `main` build, scan, publish and sign the image.
 
