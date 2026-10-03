@@ -38,6 +38,9 @@ function isOriginAllowed(origin, host) {
   }
 }
 
+// How often each stream's tuner status is refreshed.
+const MONITOR_INTERVAL_MS = 1000;
+
 const app = express();
 const server = http.createServer(app);
 
@@ -99,7 +102,7 @@ class HDHomeRunController {
     this.devices = [];
     this.activeDevice = null;
     this.activeTuner = 0;
-    this.monitoringIntervals = new Map(); // Per-stream monitoring intervals, keyed by client id
+    this.monitoringIntervals = new Map(); // Stop functions for each stream's poller, keyed by client id
     this.plpUnavailableLogged = new Set(); // Devices already reported as lacking PLP info
     this.deviceNameCache = new Map(); // Cache for device name lookups
     this.cacheTTL = 5 * 60 * 1000; // 5 minute TTL
@@ -840,75 +843,79 @@ class HDHomeRunController {
     });
   }
 
-  startMonitoring(client, deviceId, tuner) {
+  // Polls once a second for one client: the first reading goes out right away,
+  // and the next poll starts a second after the previous one began, but never
+  // before it has finished, so a hung tool call cannot pile up processes.
+  // poll() resolves to the { event, data } to send, or throws to skip a tick.
+  startPolling(client, poll, errorLabel) {
     this.stopMonitoring(client);
 
-    const intervalId = setInterval(async () => {
+    let stopped = false;
+    let timer = null;
+    const run = async () => {
+      const startedAt = Date.now();
       try {
-        const status = await this.getTunerStatus(deviceId, tuner);
-        const currentProgram = await this.getCurrentProgram(deviceId, tuner);
-
-        // Get ATSC 3.0 info if channel is tuned and device supports it
-        let plpInfo = null;
-        let l1Info = null;
-        if (status && status.channel && status.channel !== 'none') {
-          // Try to get ATSC 3.0 info - will return null if not ATSC 3.0
-          plpInfo = await this.getPlpInfo(deviceId, tuner);
-          l1Info = await this.getL1Info(deviceId, tuner);
-        }
-
-        client.emit('tuner-status', {
-          ...status,
-          currentProgram,
-          plpInfo,
-          l1Info
-        });
+        const message = await poll();
+        if (!stopped) client.emit(message.event, message.data);
       } catch (error) {
-        console.error('Monitoring error:', error);
+        console.error(errorLabel, error);
       }
-    }, 1000);
+      if (!stopped) timer = setTimeout(run, Math.max(0, MONITOR_INTERVAL_MS - (Date.now() - startedAt)));
+    };
+    this.monitoringIntervals.set(client.id, () => {
+      stopped = true;
+      clearTimeout(timer);
+    });
+    run();
+  }
 
-    this.monitoringIntervals.set(client.id, intervalId);
+  startMonitoring(client, deviceId, tuner) {
+    this.startPolling(client, async () => {
+      const status = await this.getTunerStatus(deviceId, tuner);
+      const currentProgram = await this.getCurrentProgram(deviceId, tuner);
+
+      // Get ATSC 3.0 info if channel is tuned and device supports it
+      let plpInfo = null;
+      let l1Info = null;
+      if (status && status.channel && status.channel !== 'none') {
+        // Try to get ATSC 3.0 info - will return null if not ATSC 3.0
+        plpInfo = await this.getPlpInfo(deviceId, tuner);
+        l1Info = await this.getL1Info(deviceId, tuner);
+      }
+
+      return { event: 'tuner-status', data: { ...status, currentProgram, plpInfo, l1Info } };
+    }, 'Monitoring error:');
   }
 
   startAntennaMode(client, deviceId, tunerCount) {
-    this.stopMonitoring(client);
-
     console.log(`Starting antenna mode for device ${deviceId} with ${tunerCount} tuners`);
 
-    const intervalId = setInterval(async () => {
-      try {
-        // Monitor all tuners simultaneously
-        const allTunersData = await Promise.all(
-          Array.from({ length: tunerCount }, (_, i) =>
-            this.getTunerStatus(deviceId, i)
-              .then(status => ({ tuner: i, status }))
-              .catch(error => {
-                console.error(`Error monitoring tuner ${i}:`, error);
-                return { tuner: i, status: null };
-              })
-          )
-        );
-
-        client.emit('antenna-mode-status', allTunersData);
-      } catch (error) {
-        console.error('Antenna mode monitoring error:', error);
-      }
-    }, 1000);
-
-    this.monitoringIntervals.set(client.id, intervalId);
+    this.startPolling(client, async () => {
+      // Monitor all tuners simultaneously
+      const allTunersData = await Promise.all(
+        Array.from({ length: tunerCount }, (_, i) =>
+          this.getTunerStatus(deviceId, i)
+            .then(status => ({ tuner: i, status }))
+            .catch(error => {
+              console.error(`Error monitoring tuner ${i}:`, error);
+              return { tuner: i, status: null };
+            })
+        )
+      );
+      return { event: 'antenna-mode-status', data: allTunersData };
+    }, 'Antenna mode monitoring error:');
   }
 
   stopMonitoring(client) {
     const clientId = client?.id;
     if (clientId && this.monitoringIntervals.has(clientId)) {
-      clearInterval(this.monitoringIntervals.get(clientId));
+      this.monitoringIntervals.get(clientId)();
       this.monitoringIntervals.delete(clientId);
     }
   }
 
   stopAllMonitoring() {
-    this.monitoringIntervals.forEach(intervalId => clearInterval(intervalId));
+    this.monitoringIntervals.forEach(stop => stop());
     this.monitoringIntervals.clear();
   }
 }

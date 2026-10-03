@@ -59,4 +59,24 @@ describe('event streams', () => {
     const before = b.events.length;
     await waitFor(() => b.events.length > before, { timeout: 5000 });
   });
+
+  test('the first reading arrives right away, not after a full interval', async (t) => {
+    const stream = await openStream(server.port, '/api/devices/stream5/tuner/0/stream');
+    t.after(() => stream.close());
+    await waitFor(() => stream.events.length > 0, { timeout: 700, interval: 10 });
+  });
+});
+
+describe('event streams with a slow tuner', () => {
+  test('a poll that has not finished is never overlapped by the next one', async (t) => {
+    // One tick makes two sequential tool calls (status, then program), 1.2 s each.
+    const server = await startServer({ FAKE_HDHR_DELAY_MS: '1200' });
+    t.after(() => server.stop());
+    const stream = await openStream(server.port, '/api/devices/slow1/tuner/0/stream');
+    t.after(() => stream.close());
+    await sleep(3500);
+    // Overlapping ticks would have started a status call every second (4 by now).
+    const statusCalls = server.calls().filter((c) => /\/status$/.test(c[2])).length;
+    assert.ok(statusCalls <= 2, `${statusCalls} status calls in 3.5 s`);
+  });
 });

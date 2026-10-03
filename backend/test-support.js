@@ -15,10 +15,13 @@ const fs = require('fs');
 const args = process.argv.slice(2);
 fs.appendFileSync(process.env.FAKE_HDHR_LOG, JSON.stringify(args) + '\\n');
 const target = args[1] === 'get' || args[1] === 'set' ? args[2] : '';
-if (args[0] === 'discover' && args.length === 1) { if (process.env.FAKE_DISCOVER_OUTPUT) console.log(process.env.FAKE_DISCOVER_OUTPUT); }
-else if (target === '/sys/model') console.log('HDHR5-4US');
-else if (target === '/sys/hwmodel') console.log('HDHR5-4US');
-else if (/\\/status$/.test(target)) console.log('ch=8vsb:27 lock=8vsb ss=90 snq=80 seq=100 bps=0 pps=0');
+// FAKE_HDHR_DELAY_MS makes every call slow, like a tuner that is slow to answer.
+setTimeout(() => {
+  if (args[0] === 'discover' && args.length === 1) { if (process.env.FAKE_DISCOVER_OUTPUT) console.log(process.env.FAKE_DISCOVER_OUTPUT); }
+  else if (target === '/sys/model') console.log('HDHR5-4US');
+  else if (target === '/sys/hwmodel') console.log('HDHR5-4US');
+  else if (/\\/status$/.test(target)) console.log('ch=8vsb:27 lock=8vsb ss=90 snq=80 seq=100 bps=0 pps=0');
+}, Number(process.env.FAKE_HDHR_DELAY_MS || 0));
 `;
 
 function sleep(ms) {
