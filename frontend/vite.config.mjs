@@ -1,8 +1,8 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 
-// The dev server cannot reach the backend on its own, so proxy the API and
-// the Socket.IO endpoint to it. Override the target with BACKEND_URL.
+// The dev server cannot reach the backend on its own, so proxy the API (which
+// includes the event streams) to it. Override the target with BACKEND_URL.
 const backend = process.env.BACKEND_URL || 'http://localhost:3000';
 
 export default defineConfig({
@@ -15,7 +15,6 @@ export default defineConfig({
     port: 5173,
     proxy: {
       '/api': backend,
-      '/socket.io': { target: backend, ws: true },
     },
   },
   test: {

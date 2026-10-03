@@ -1,4 +1,4 @@
-const CACHE_NAME = 'hdhr-monitor-v3';
+const CACHE_NAME = 'hdhr-monitor-musypbbv-2c2eb496';
 const urlsToCache = [
   '/',
   '/manifest.json',
@@ -26,9 +26,9 @@ self.addEventListener('install', (event) => {
 
 // Fetch event - network-first for HTML, cache-first for assets
 self.addEventListener('fetch', (event) => {
-  // Skip caching for API calls, WebSocket connections, and version files
+  // Skip caching for API calls (which includes the event streams, so they are
+  // never intercepted or buffered) and version files
   if (event.request.url.includes('/api/') ||
-      event.request.url.includes('/socket.io/') ||
       event.request.url.includes('build-version.json') ||
       event.request.method !== 'GET') {
     return;

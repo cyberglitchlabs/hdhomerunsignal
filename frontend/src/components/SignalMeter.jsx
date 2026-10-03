@@ -12,11 +12,10 @@ import TunerSettings from './signal/TunerSettings';
 import { useChannelControl } from '../hooks/useChannelControl';
 import { clampTuner, useDevices } from '../hooks/useDevices';
 import { useInstallPrompt } from '../hooks/useInstallPrompt';
-import { useMonitoring } from '../hooks/useMonitoring';
 import { useRegion } from '../hooks/useRegion';
 import { useSignalHistory } from '../hooks/useSignalHistory';
 import { statsKey, useSignalStats } from '../hooks/useSignalStats';
-import { useSocket } from '../hooks/useSocket';
+import { useEventStream } from '../hooks/useEventStream';
 import { useTunerState } from '../hooks/useTunerState';
 import { getChannelRange } from '../utils/channels';
 
@@ -38,17 +37,13 @@ function SignalMeter() {
   });
   const signalStats = useSignalStats(tunerStatus, selectedDevice, selectedTuner);
 
-  const socket = useSocket({
-    onTunerStatus: handleTunerStatus,
-    onAntennaModeStatus: setAllTunersData,
-    monitorState: { selectedDevice, selectedTuner, antennaMode, deviceInfo }
-  });
-  useMonitoring({
-    socket,
+  useEventStream({
     selectedDevice,
     selectedTuner,
     antennaMode,
     deviceInfo,
+    onTunerStatus: handleTunerStatus,
+    onAntennaModeStatus: setAllTunersData,
     onLeaveAntennaMode: () => setAllTunersData([])
   });
 

@@ -179,34 +179,49 @@ function request(port, { method = 'GET', path: urlPath = '/', headers = {}, body
   });
 }
 
-// Socket.IO over plain HTTP long-polling, so no client library is needed.
-// Packets are Engine.IO v4: "0{...}" open, "40" connect, "42[...]" event.
-const SIO = '/socket.io/?EIO=4&transport=polling';
-
-async function socketHandshake(port, headers = {}) {
-  const res = await request(port, { path: `${SIO}&t=${Date.now()}`, headers });
-  if (res.status !== 200) return { res };
-  const open = JSON.parse(res.body.slice(res.body.indexOf('{')));
-  return { res, sid: open.sid };
+// Opens a Server-Sent Events subscription and collects what arrives. Resolves
+// once the response headers are in. `events` holds { event, data } for each
+// event (data parsed as JSON), and `comments` the keepalive comment lines.
+function openStream(port, urlPath, { headers = {} } = {}) {
+  return new Promise((resolve, reject) => {
+    const events = [];
+    const comments = [];
+    let buffer = '';
+    const req = http.request({
+      host: '127.0.0.1', port, method: 'GET', path: urlPath, agent: false,
+      headers: { Accept: 'text/event-stream', ...headers }
+    }, (res) => {
+      const closed = new Promise((done) => { res.on('close', done); });
+      if (res.statusCode !== 200) {
+        let body = '';
+        res.setEncoding('utf8');
+        res.on('data', (chunk) => { body += chunk; });
+        res.on('end', () => resolve({ status: res.statusCode, headers: res.headers, body, events, comments, closed, close() {} }));
+        return;
+      }
+      res.setEncoding('utf8');
+      res.on('data', (chunk) => {
+        buffer += chunk;
+        let end;
+        while ((end = buffer.indexOf('\n\n')) !== -1) {
+          const block = buffer.slice(0, end);
+          buffer = buffer.slice(end + 2);
+          let event = 'message';
+          let data = '';
+          for (const line of block.split('\n')) {
+            if (line.startsWith(':')) comments.push(line.slice(1).trim());
+            else if (line.startsWith('event:')) event = line.slice(6).trim();
+            else if (line.startsWith('data:')) data += line.slice(5).trim();
+          }
+          if (data) events.push({ event, data: JSON.parse(data) });
+        }
+      });
+      res.on('error', () => {});
+      resolve({ status: res.statusCode, headers: res.headers, events, comments, closed, close: () => req.destroy() });
+    });
+    req.on('error', reject);
+    req.end();
+  });
 }
 
-// Opens a polling session, connects to the default namespace and returns a
-// function that emits events on it.
-async function socketConnect(port) {
-  const { res, sid } = await socketHandshake(port);
-  if (!sid) throw new Error(`Socket.IO handshake failed with ${res.status}`);
-  const url = `${SIO}&sid=${sid}`;
-  await request(port, { method: 'POST', path: url, body: '40', headers: { 'Content-Type': 'text/plain' } });
-  await request(port, { path: url }); // read the namespace connect packet
-  return {
-    sid,
-    emit: (event, payload) => request(port, {
-      method: 'POST',
-      path: url,
-      body: `42${JSON.stringify([event, payload])}`,
-      headers: { 'Content-Type': 'text/plain' }
-    })
-  };
-}
-
-module.exports = { startServer, spawnServer, request, socketHandshake, socketConnect, sleep, waitFor, SIO };
+module.exports = { startServer, spawnServer, request, openStream, sleep, waitFor };

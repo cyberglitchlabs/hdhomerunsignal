@@ -137,7 +137,9 @@ Tagged releases also publish the chart as an OCI artifact:
 
 **Behind an ingress or reverse proxy.** Set `trustProxy` (the `HDHR_TRUST_PROXY` variable) so per-client rate limiting sees each user's real address; `--set trustProxy=1` is right for a single ingress controller directly in front of the pod. Without it every client shares the proxy's address and therefore one rate-limit bucket. Set it to the number of proxies you actually run, or their addresses, and no more: trusting a proxy hop that is not there lets any client spoof its address with an `X-Forwarded-For` header. (Tested with one hop; if a load balancer sits in front of your ingress controller, count both.)
 
-The proxy must also **preserve the original `Host` header** (nginx-ingress does by default). The API and WebSocket reject browser requests whose `Origin` does not match the `Host` they arrive with, and `X-Forwarded-Host` is not consulted. If your proxy rewrites `Host`, list the public origin in `allowedOrigins` (`HDHR_ALLOWED_ORIGINS`) instead.
+Real-time updates are long-lived Server-Sent Events responses, so the proxy must not buffer or time out `/api/devices/:id/.../stream`. The server sends `X-Accel-Buffering: no` and a keepalive comment every 15 seconds; with nginx-ingress, raise `proxy-read-timeout` above that if you have lowered it.
+
+The proxy must also **preserve the original `Host` header** (nginx-ingress does by default). The API (including the event streams) rejects browser requests whose `Origin` does not match the `Host` they arrive with, and `X-Forwarded-Host` is not consulted. If your proxy rewrites `Host`, list the public origin in `allowedOrigins` (`HDHR_ALLOWED_ORIGINS`) instead.
 
 ### Image provenance
 
@@ -256,8 +258,8 @@ Select your region (United States, Canada, United Kingdom/EU or Australia) to co
 
 ### Architecture
 - **Frontend**: React with Material-UI
-- **Backend**: Node.js with Express and Socket.io
-- **Communication**: REST API + WebSockets for real-time updates
+- **Backend**: Node.js with Express
+- **Communication**: REST API + Server-Sent Events for real-time updates
 - **HDHomeRun Integration**: Uses `hdhomerun_config` command-line tool
 
 ### Container
@@ -278,8 +280,8 @@ Select your region (United States, Canada, United Kingdom/EU or Australia) to co
 - `POST /api/devices/:id/tuner/:tuner/clear` - Clear/stop tuner
 - `GET /api/devices/:id/stream/play.m3u?ch=&program=&name=` - Download M3U playlist for a program
 - `GET /api/devices/:id/stream/url?ch=&program=` - Get raw stream URL for a program
-- WebSocket: `start-monitoring` - Begin real-time signal updates
-- WebSocket: `stop-monitoring` - Stop real-time signal updates
+- `GET /api/devices/:id/tuner/:tuner/stream` - Server-Sent Events: one `tuner-status` event per second (status, current program, ATSC 3.0 PLP and L1 info) until the client disconnects
+- `GET /api/devices/:id/antenna/stream?tuners=N` - Server-Sent Events: one `antenna-mode-status` event per second with the status of tuners `0` to `N-1` (`N` is 1 to 8)
 
 ## Development
 
@@ -298,7 +300,7 @@ To run in development mode:
    ```
 
    The Vite dev server listens on http://localhost:5173 and proxies `/api`
-   and `/socket.io` to the backend on `http://localhost:3000`. Set
+   to the backend on `http://localhost:3000`. Set
    `BACKEND_URL` to point it somewhere else.
 
 Run the tests with `npm test` in `/backend` and in `/frontend` (the frontend
