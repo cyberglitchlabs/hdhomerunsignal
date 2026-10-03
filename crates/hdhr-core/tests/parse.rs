@@ -115,16 +115,33 @@ fn tuners_for_model_by_name() {
 
 #[test]
 fn idle_tuner_status() {
-    // A real idle tuner prints "ch=none lock=none". The Node server reported
-    // lock=true here (any lock= field counted); the port keeps that.
+    // A real idle tuner prints "ch=none lock=none": there is no lock.
     let status = parse_tuner_status(
         fixture!("hardware-status-idle.txt"),
         Some(fixture!("hardware-debug-idle.txt")),
     );
     assert_eq!(
         to_json(&status),
-        json!({ "channel": "none", "lock": true, "ss": 0, "snq": 0, "seq": 0, "bps": 0, "pps": 0 })
+        json!({ "channel": "none", "lock": false, "ss": 0, "snq": 0, "seq": 0, "bps": 0, "pps": 0 })
     );
+}
+
+#[test]
+fn a_tuned_channel_without_a_lock_is_unlocked() {
+    // Seen on the test device after a scan left tuner 0 on a frequency with no signal.
+    let status = parse_tuner_status(
+        "ch=auto:641000000 lock=none ss=47 snq=0 seq=0 bps=0 pps=0",
+        None,
+    );
+    assert!(!status.lock);
+    assert_eq!(
+        (status.channel.as_deref(), status.ss),
+        (Some("auto:641000000"), Some(47))
+    );
+    // Whatever the device locked to counts, with or without a frequency.
+    assert!(parse_tuner_status("ch=auto:34 lock=8vsb:593000000", None).lock);
+    assert!(parse_tuner_status("ch=atsc3:27 lock=atsc3", None).lock);
+    assert!(parse_tuner_status("ch=qam256:117 lock=qam256", None).lock);
 }
 
 #[test]
