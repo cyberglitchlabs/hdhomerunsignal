@@ -1,0 +1,1 @@
+ch=8vsb:34 lock=8vsb ss=85 snq=100 seq=100 bps=19392640 pps=1812

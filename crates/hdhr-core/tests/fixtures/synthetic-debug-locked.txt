@@ -1,0 +1,4 @@
+tun: ch=8vsb:34 lock=8vsb ss=85 snq=100 seq=100 dbg=65-19/-1817
+dev: bps=19392640 resync=0 overflow=0
+ts:  bps=19392640 te=0 crc=0
+net: bps=0 pps=0 err=0 stop=0

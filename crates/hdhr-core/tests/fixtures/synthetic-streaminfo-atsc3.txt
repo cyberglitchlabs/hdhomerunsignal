@@ -1,0 +1,3 @@
+service=1: 12.1 WHYY (atsc3)
+service=2: 12.2 WHYY-Create
+program=3: 12.3 Kids (encrypted)

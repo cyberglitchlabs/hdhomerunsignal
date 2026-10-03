@@ -102,3 +102,6 @@ ehthumbs.db
 Thumbs.db
 
 deploy-to-prod
+
+# Rust
+/target/
