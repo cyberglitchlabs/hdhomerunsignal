@@ -1,48 +1,58 @@
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 
 /**
- * Tell the backend what to stream over the socket: one tuner's status
- * normally, or every tuner's in antenna mode.
+ * Ask the backend to stream what the current mode needs: one tuner's status
+ * normally, or every tuner's in antenna mode. Returns a function that stops
+ * it, or null when there is nothing to start yet (no socket, no device, or
+ * antenna mode before the device's tuner count is known).
+ */
+export function startMonitoring(socket, { selectedDevice, selectedTuner, antennaMode, deviceInfo }) {
+  if (!socket || !selectedDevice) return null;
+
+  if (antennaMode) {
+    if (!deviceInfo) return null;
+    socket.emit('start-antenna-mode', {
+      deviceId: selectedDevice,
+      tunerCount: deviceInfo.tuners
+    });
+  } else {
+    socket.emit('start-monitoring', {
+      deviceId: selectedDevice,
+      tuner: selectedTuner
+    });
+  }
+  return () => socket.emit('stop-monitoring');
+}
+
+/**
+ * Keep the backend streaming for the selected device, tuner and mode. This is
+ * the only place that starts or stops monitoring: each change stops the old
+ * stream and starts the new one exactly once.
  *
- * onLeaveAntennaMode runs when normal mode (re)starts so the caller can drop
- * the antenna readings.
+ * onLeaveAntennaMode runs when normal mode starts so the caller can drop the
+ * antenna readings.
  */
 export function useMonitoring({ socket, selectedDevice, selectedTuner, antennaMode, deviceInfo, onLeaveAntennaMode }) {
+  const onLeaveRef = useRef(onLeaveAntennaMode);
   useEffect(() => {
-    if (selectedDevice && socket) {
-      console.log('useEffect: Starting monitoring for device:', selectedDevice, 'tuner:', selectedTuner);
-      socket.emit('start-monitoring', {
-        deviceId: selectedDevice,
-        tuner: selectedTuner
-      });
-    }
-    return () => {
-      if (socket) {
-        console.log('useEffect cleanup: Stopping monitoring');
-        socket.emit('stop-monitoring');
-      }
-    };
-  }, [selectedDevice, selectedTuner, socket]);
+    onLeaveRef.current = onLeaveAntennaMode;
+  });
 
-  // Handle antenna mode switching
+  // Only antenna mode needs the tuner count, so normal monitoring must not
+  // restart when the device info arrives.
+  const tunerCount = antennaMode ? deviceInfo?.tuners : undefined;
+  // The selected tuner is irrelevant in antenna mode, so it must not restart it.
+  const tuner = antennaMode ? null : selectedTuner;
+
   useEffect(() => {
-    if (!socket || !selectedDevice || !deviceInfo) return;
-
-    if (antennaMode) {
-      console.log('Switching to antenna mode');
-      socket.emit('stop-monitoring');
-      socket.emit('start-antenna-mode', {
-        deviceId: selectedDevice,
-        tunerCount: deviceInfo.tuners
-      });
-    } else {
-      console.log('Switching to normal mode');
-      socket.emit('stop-monitoring');
-      socket.emit('start-monitoring', {
-        deviceId: selectedDevice,
-        tuner: selectedTuner
-      });
-      onLeaveAntennaMode(); // Clear antenna mode data
-    }
-  }, [antennaMode, selectedDevice, socket, deviceInfo, selectedTuner]);
+    const stop = startMonitoring(socket, {
+      selectedDevice,
+      selectedTuner: tuner,
+      antennaMode,
+      deviceInfo: tunerCount === undefined ? null : { tuners: tunerCount }
+    });
+    if (!stop) return undefined;
+    if (!antennaMode) onLeaveRef.current();
+    return stop;
+  }, [socket, selectedDevice, tuner, antennaMode, tunerCount]);
 }

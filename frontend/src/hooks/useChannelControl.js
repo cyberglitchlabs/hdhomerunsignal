@@ -1,5 +1,6 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import axios from 'axios';
+import { createCancelGate } from '../utils/cancelGate';
 import { channelFromStatus, getChannelRange, stepChannel } from '../utils/channels';
 
 /**
@@ -12,14 +13,29 @@ import { channelFromStatus, getChannelRange, stepChannel } from '../utils/channe
 export function useChannelControl({ selectedDevice, selectedTuner, region, channelMap, tunerStatus, clearAtsc3Info }) {
   const [directChannel, setDirectChannel] = useState('');
   const [currentChannelPrograms, setCurrentChannelPrograms] = useState([]);
-  const pendingProgramFetchRef = useRef(null);
+  // Every program fetch checks this before writing, so one that is overtaken
+  // by a new tune, a tuner/device switch, Stop or unmount is dropped.
+  const [programFetchGate] = useState(createCancelGate);
 
   // Drop everything shown for the previous channel, device or tuner
   const resetChannelData = () => {
+    programFetchGate.cancel();
     setCurrentChannelPrograms([]);
     clearAtsc3Info();
     setDirectChannel('');
   };
+
+  // Clear all data when the device or tuner changes. This runs before the
+  // auto-fetch effect below so that effect's fetch is not cancelled by it.
+  useEffect(() => {
+    console.log('Device/tuner changed to:', selectedDevice, selectedTuner, '- clearing old channel data');
+    resetChannelData();
+    // Note: monitoring will restart via the monitoring effect, and
+    // the auto-fetch effect will repopulate data for the new tuner
+  }, [selectedDevice, selectedTuner]);
+
+  // Leaving the page cancels any pending program fetch
+  useEffect(() => () => programFetchGate.cancel(), []);
 
   // Update directChannel input field when tuner status changes
   useEffect(() => {
@@ -48,24 +64,17 @@ export function useChannelControl({ selectedDevice, selectedTuner, region, chann
     }
   }, [tunerStatus?.lock, tunerStatus?.channel, selectedDevice, selectedTuner]);
 
-  // Clear all data when tuner changes
-  useEffect(() => {
-    console.log('Tuner changed to:', selectedTuner, '- clearing old channel data');
-    resetChannelData();
-    // Note: monitoring will restart via the monitoring effect, and
-    // the auto-fetch effect will repopulate data for the new tuner
-  }, [selectedTuner]);
-
-  const getCurrentChannelPrograms = async () => {
+  const getCurrentChannelPrograms = async (isCurrent = programFetchGate.start()) => {
     if (!selectedDevice) return [];
 
     try {
       const response = await axios.get(`/api/devices/${selectedDevice}/tuner/${selectedTuner}/programs`);
+      if (!isCurrent()) return [];
       setCurrentChannelPrograms(response.data);
       return response.data;
     } catch (error) {
       console.error('Failed to get current channel programs:', error);
-      setCurrentChannelPrograms([]);
+      if (isCurrent()) setCurrentChannelPrograms([]);
       return [];
     }
   };
@@ -75,10 +84,10 @@ export function useChannelControl({ selectedDevice, selectedTuner, region, chann
 
     try {
       // Cancel any pending program fetch from previous channel change
-      if (pendingProgramFetchRef.current) {
-        pendingProgramFetchRef.current.cancelled = true;
-        pendingProgramFetchRef.current = null;
-      }
+      programFetchGate.cancel();
+      // Started before the POST so a Stop, switch or newer tune while it is in
+      // flight also drops the fetches below
+      const isCurrent = programFetchGate.start();
 
       // Clear old data immediately when changing channels
       setCurrentChannelPrograms([]);
@@ -88,36 +97,30 @@ export function useChannelControl({ selectedDevice, selectedTuner, region, chann
       await axios.post(`/api/devices/${selectedDevice}/tuner/${selectedTuner}/channel`, {
         channel
       });
+      if (!isCurrent()) return;
 
       // Don't clear directChannel - it will be updated by the effect when tuner status updates
-
-      // Create cancellation token for this fetch operation
-      const fetchToken = { cancelled: false };
-      pendingProgramFetchRef.current = fetchToken;
 
       // Wait for tuner to lock with progressive delays
       const waitAndGetPrograms = async () => {
         // Initial wait
         await new Promise(resolve => setTimeout(resolve, 2000));
+        if (!isCurrent()) return;
 
-        // Check if this operation was cancelled
-        if (fetchToken.cancelled) return;
-
-        const firstResponse = await getCurrentChannelPrograms();
+        const firstResponse = await getCurrentChannelPrograms(isCurrent);
 
         // Try again after longer delay for slow-locking channels
         await new Promise(resolve => setTimeout(resolve, 4000));
-
-        // Check again if this operation was cancelled before updating state
-        if (fetchToken.cancelled) return;
+        if (!isCurrent()) return;
 
         const response = await axios.get(`/api/devices/${selectedDevice}/tuner/${selectedTuner}/programs`);
+        if (!isCurrent()) return;
         if (response.data.length > (firstResponse?.length || 0)) {
           setCurrentChannelPrograms(response.data);
         }
       };
 
-      waitAndGetPrograms();
+      waitAndGetPrograms().catch(error => console.error('Failed to get programs after tuning:', error));
     } catch (error) {
       console.error('Failed to set channel:', error);
     }
@@ -160,7 +163,6 @@ export function useChannelControl({ selectedDevice, selectedTuner, region, chann
     directChannel,
     setDirectChannel,
     currentChannelPrograms,
-    resetChannelData,
     tuneToDirectChannel,
     incrementChannel,
     decrementChannel,
