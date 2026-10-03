@@ -15,7 +15,8 @@ const fs = require('fs');
 const args = process.argv.slice(2);
 fs.appendFileSync(process.env.FAKE_HDHR_LOG, JSON.stringify(args) + '\\n');
 const target = args[1] === 'get' || args[1] === 'set' ? args[2] : '';
-if (target === '/sys/model') console.log('HDHR5-4US');
+if (args[0] === 'discover' && args.length === 1) { if (process.env.FAKE_DISCOVER_OUTPUT) console.log(process.env.FAKE_DISCOVER_OUTPUT); }
+else if (target === '/sys/model') console.log('HDHR5-4US');
 else if (target === '/sys/hwmodel') console.log('HDHR5-4US');
 else if (/\\/status$/.test(target)) console.log('ch=8vsb:27 lock=8vsb ss=90 snq=80 seq=100 bps=0 pps=0');
 `;
@@ -40,7 +41,9 @@ function makeFakeTool() {
   fs.writeFileSync(bin, FAKE_TOOL, { mode: 0o755 });
   const log = path.join(dir, 'calls.log');
   fs.writeFileSync(log, '');
-  return { dir, log };
+  const httpsLog = path.join(dir, 'https.log');
+  fs.writeFileSync(httpsLog, '');
+  return { dir, log, httpsLog };
 }
 
 function spawnServer(env = {}) {
@@ -50,8 +53,12 @@ function spawnServer(env = {}) {
       ...process.env,
       PATH: `${tool.dir}${path.delimiter}${process.env.PATH}`,
       FAKE_HDHR_LOG: tool.log,
+      // The server never reaches the network under test; see test-https-stub.js.
+      FAKE_HTTPS_LOG: tool.httpsLog,
+      NODE_OPTIONS: `--require ${JSON.stringify(path.join(__dirname, 'test-https-stub.js'))}`,
       PORT: '0',
       HDHOMERUN_DISABLE_DISCOVERY: 'true',
+      HDHR_DISABLE_CLOUD_DISCOVERY: '',
       HDHR_RATE_LIMIT: '0',
       HDHR_TRUST_PROXY: '',
       HDHR_ALLOWED_ORIGINS: '',
@@ -71,6 +78,8 @@ function spawnServer(env = {}) {
 
   const calls = () => fs.readFileSync(tool.log, 'utf8')
     .split('\n').filter(Boolean).map((line) => JSON.parse(line));
+
+  const httpsCalls = () => fs.readFileSync(tool.httpsLog, 'utf8').split('\n').filter(Boolean);
 
   // Resolves with the bound port, or rejects if the server exits first.
   const ready = new Promise((resolve, reject) => {
@@ -95,6 +104,7 @@ function spawnServer(env = {}) {
     ready,
     output: () => output,
     calls,
+    httpsCalls,
     clearCalls: () => fs.writeFileSync(tool.log, ''),
     async stop() {
       if (proc.exitCode === null && proc.signalCode === null) proc.kill('SIGKILL');

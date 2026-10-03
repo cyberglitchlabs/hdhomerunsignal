@@ -23,7 +23,10 @@
         },
         "discovery": {
           "type": "object",
-          "properties": { "enabled": { "type": "boolean" } }
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "cloud": { "type": "boolean" }
+          }
         }
       }
     },

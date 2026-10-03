@@ -21,6 +21,10 @@ hdhomerun:
     # Broadcast auto-discovery cannot cross the pod network. It only works with
     # hostNetwork: true on a node that shares a LAN with the tuners.
     enabled: false
+    # When the broadcast finds nothing, a refresh asks SiliconDust's cloud
+    # service (ipv4-api.hdhomerun.com). Set to false to keep local broadcast
+    # discovery but never make that outside lookup (HDHR_DISABLE_CLOUD_DISCOVERY).
+    cloud: true
 
 # Browser origins allowed to call the API cross-origin (HDHR_ALLOWED_ORIGINS).
 # Empty means same-origin only, which is what the bundled UI needs.

@@ -164,6 +164,13 @@ class HDHomeRunController {
       return udpDevices;
     }
 
+    // The cloud lookup sends a request to SiliconDust, so it has its own opt-out
+    // that leaves the local broadcast above alone.
+    if (process.env.HDHR_DISABLE_CLOUD_DISCOVERY === 'true') {
+      console.log('UDP discovery found no devices; cloud discovery disabled via HDHR_DISABLE_CLOUD_DISCOVERY');
+      return [];
+    }
+
     // Fallback to HTTP discovery API - only hit the remote API on explicit user refresh
     // to avoid hammering the HDHomeRun cloud service on every automatic call.
     if (!forceRefresh && this.httpDiscoveryCache !== null) {
