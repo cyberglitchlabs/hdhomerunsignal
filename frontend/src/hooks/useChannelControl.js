@@ -37,6 +37,14 @@ export function useChannelControl({ selectedDevice, selectedTuner, region, chann
   // Leaving the page cancels any pending program fetch
   useEffect(() => () => programFetchGate.cancel(), []);
 
+  // The channel number the tuner's reported channel means in this region. A
+  // frequency-form channel is a different number per region, so the effect
+  // below also reruns when the region changes that number, but not otherwise
+  // (a region change must not overwrite what the user has typed for 'auto:27').
+  const reportedChannel = tunerStatus?.channel && tunerStatus.channel !== 'none'
+    ? channelFromStatus(tunerStatus.channel, region)
+    : null;
+
   // Update directChannel input field when tuner status changes
   useEffect(() => {
     if (tunerStatus?.channel) {
@@ -44,12 +52,11 @@ export function useChannelControl({ selectedDevice, selectedTuner, region, chann
         // Tuner is cleared/stopped
         setDirectChannel('');
         setCurrentChannelPrograms([]);
-      } else {
-        const channel = channelFromStatus(tunerStatus.channel, region);
-        if (channel) setDirectChannel(channel);
+      } else if (reportedChannel) {
+        setDirectChannel(reportedChannel);
       }
     }
-  }, [tunerStatus?.channel]);
+  }, [tunerStatus?.channel, reportedChannel]);
 
   // Auto-fetch programs when channel is already tuned on initial load or after tuner change
   useEffect(() => {
