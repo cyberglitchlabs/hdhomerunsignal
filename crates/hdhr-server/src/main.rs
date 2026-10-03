@@ -37,7 +37,7 @@ async fn main() -> ExitCode {
         hdhr,
         CloudClient::new(config.cloud_discovery_url.clone()),
     ));
-    let app = router(state).into_make_service_with_connect_info::<SocketAddr>();
+    let app = router(state.clone()).into_make_service_with_connect_info::<SocketAddr>();
 
     let listener = match TcpListener::bind(("0.0.0.0", config.port)).await {
         Ok(listener) => listener,
@@ -55,7 +55,7 @@ async fn main() -> ExitCode {
         }
     }
 
-    let served = axum::serve(listener, app).with_graceful_shutdown(shutdown_signal());
+    let served = axum::serve(listener, app).with_graceful_shutdown(shutdown_signal(state));
     match served.await {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
@@ -65,10 +65,11 @@ async fn main() -> ExitCode {
     }
 }
 
-/// Resolves on SIGTERM or SIGINT, then starts a timer that ends the process if
+/// Resolves on SIGTERM or SIGINT, after ending every event stream (which would
+/// otherwise stay open for ever), then starts a timer that ends the process if
 /// connections stay open past [`SHUTDOWN_TIMEOUT`]. In a container the server is
 /// PID 1, where a signal without a handler is ignored.
-async fn shutdown_signal() {
+async fn shutdown_signal(state: Arc<AppState>) {
     let (Ok(mut term), Ok(mut int)) = (
         signal(SignalKind::terminate()),
         signal(SignalKind::interrupt()),
@@ -81,6 +82,7 @@ async fn shutdown_signal() {
         _ = int.recv() => "SIGINT",
     };
     tracing::info!("{name} received, shutting down");
+    state.begin_shutdown();
     tokio::spawn(async {
         tokio::time::sleep(SHUTDOWN_TIMEOUT).await;
         tracing::error!("Shutdown timed out, forcing exit");
