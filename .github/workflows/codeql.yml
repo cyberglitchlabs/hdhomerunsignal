@@ -9,9 +9,11 @@ on:
 
 permissions: {}
 
+# Superseded pull request runs are cancelled. Pushes to main and scheduled runs
+# get a group of their own per commit so that every commit is analyzed.
 concurrency:
-  group: codeql-${{ github.ref }}
-  cancel-in-progress: true
+  group: codeql-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   analyze:
