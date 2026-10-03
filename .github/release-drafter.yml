@@ -1,0 +1,105 @@
+# Release Drafter: keeps a draft GitHub release up to date as pull requests are
+# merged to main. Publishing the draft creates the tag, which triggers the
+# release workflow (build, scan, publish and sign the image and chart).
+
+name-template: "v$RESOLVED_VERSION"
+tag-template: "v$RESOLVED_VERSION"
+change-template: "- $TITLE (#$NUMBER) @$AUTHOR"
+change-title-escapes: '\<*_&@'
+no-changes-template: "- No user-facing changes."
+
+exclude-labels:
+  - skip-changelog
+
+categories:
+  - title: "Security"
+    labels:
+      - security
+  - title: "Features"
+    labels:
+      - enhancement
+  - title: "Fixes"
+    labels:
+      - bug
+  - title: "Container image and Helm chart"
+    labels:
+      - container
+      - chart
+  - title: "CI and release automation"
+    labels:
+      - ci
+  - title: "Documentation"
+    labels:
+      - documentation
+  - title: "Dependencies"
+    labels:
+      - dependencies
+
+# Next version from PR labels. Anything unlabelled is treated as a patch.
+version-resolver:
+  major:
+    labels:
+      - breaking
+  minor:
+    labels:
+      - enhancement
+  patch:
+    labels:
+      - bug
+      - security
+      - container
+      - chart
+      - ci
+      - documentation
+      - dependencies
+  default: patch
+
+# Labels are applied to pull requests by the autolabeler workflow so that notes
+# are categorized without anyone having to remember to label.
+autolabeler:
+  - label: chart
+    files:
+      - "charts/**"
+  - label: container
+    files:
+      - "Dockerfile"
+      - ".dockerignore"
+  - label: ci
+    files:
+      - ".github/**"
+  - label: documentation
+    files:
+      - "README.md"
+      - "docs/**"
+  - label: bug
+    branch:
+      - "^fix/"
+  - label: enhancement
+    branch:
+      - "^feat/"
+  - label: security
+    branch:
+      - "^security/"
+
+template: |
+  ## What's changed
+
+  $CHANGES
+
+  ## Install
+
+  Container image:
+
+  ```
+  ghcr.io/cyberglitchlabs/hdhomerunsignal:$RESOLVED_VERSION
+  ```
+
+  Helm chart:
+
+  ```
+  helm install hdhr oci://ghcr.io/cyberglitchlabs/charts/hdhomerun-signal --version $RESOLVED_VERSION
+  ```
+
+  Images and charts are signed with cosign; see the README for how to verify them.
+
+  **Full changelog**: https://github.com/cyberglitchlabs/hdhomerunsignal/compare/$PREVIOUS_TAG...v$RESOLVED_VERSION
