@@ -15,7 +15,7 @@ import { useInstallPrompt } from '../hooks/useInstallPrompt';
 import { useMonitoring } from '../hooks/useMonitoring';
 import { useRegion } from '../hooks/useRegion';
 import { useSignalHistory } from '../hooks/useSignalHistory';
-import { useSignalStats } from '../hooks/useSignalStats';
+import { statsKey, useSignalStats } from '../hooks/useSignalStats';
 import { useSocket } from '../hooks/useSocket';
 import { useTunerState } from '../hooks/useTunerState';
 import { getChannelRange } from '../utils/channels';
@@ -33,7 +33,7 @@ function SignalMeter() {
   // Rolling signal/SNR history for the chart. Restarts with the channel (same key
   // as the session start/peak markers) and only records readings with a lock.
   const signalHistory = useSignalHistory(tunerStatus, {
-    resetKey: `${selectedDevice}|${selectedTuner}|${tunerStatus?.channel}`,
+    resetKey: statsKey(selectedDevice, selectedTuner, tunerStatus?.channel),
     requireLock: true
   });
   const signalStats = useSignalStats(tunerStatus, selectedDevice, selectedTuner);

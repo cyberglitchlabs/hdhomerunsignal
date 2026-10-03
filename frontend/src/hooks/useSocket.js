@@ -82,7 +82,10 @@ export function bindSocketEvents(socket, { onTunerStatus, onAntennaModeStatus, g
 export function useSocket({ onTunerStatus, onAntennaModeStatus, monitorState }) {
   const [socket, setSocket] = useState(null);
   const latest = useRef({ onTunerStatus, onAntennaModeStatus, monitorState });
-  latest.current = { onTunerStatus, onAntennaModeStatus, monitorState };
+  // Keep the latest values for the handlers below (an effect, so a discarded render can't leak in)
+  useEffect(() => {
+    latest.current = { onTunerStatus, onAntennaModeStatus, monitorState };
+  });
 
   useEffect(() => {
     const newSocket = io({
