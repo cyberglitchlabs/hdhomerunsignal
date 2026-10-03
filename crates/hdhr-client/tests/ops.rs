@@ -223,6 +223,20 @@ async fn programs_are_not_requested_from_an_idle_tuner() {
 }
 
 #[tokio::test]
+async fn programs_are_not_requested_from_a_frequency_with_no_lock() {
+    let (hdhr, mock) = hdhr(
+        Mock::default()
+            .ok(
+                "/tuner0/status",
+                "ch=auto:641000000 lock=none ss=47 snq=0 seq=0 bps=0 pps=0",
+            )
+            .ok("/tuner0/streaminfo", "3: 2.1 X"),
+    );
+    assert!(hdhr.programs("h", 0).await.is_empty());
+    assert_eq!(mock.count("get h /tuner0/streaminfo"), 0);
+}
+
+#[tokio::test]
 async fn programs_of_a_locked_tuner() {
     let (hdhr, _) = hdhr(Mock::default().ok("/tuner0/status", LOCKED).ok(
         "/tuner0/streaminfo",

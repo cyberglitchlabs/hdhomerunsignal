@@ -166,9 +166,9 @@ fn estimate_signal_dbm(raw: f64) -> f64 {
 /// Parses `/tuner<n>/status`, plus `/tuner<n>/debug` when it was available,
 /// which adds the dB estimates. `None` when the status could not be read.
 ///
-/// Fields the device did not report are left unset. `lock` is true whenever a
-/// `lock=` field is present, whatever its value: that is how the Node server
-/// has always read it.
+/// Fields the device did not report are left unset. `lock` is true only when
+/// the device names what it locked to (`lock=8vsb`); `lock=none` is no lock. The
+/// Node server counted any `lock=` field, so an idle tuner read as locked.
 pub fn parse_tuner_status(status: &str, debug: Option<&str>) -> TunerStatus {
     let line = status.trim();
     if line == "none" {
@@ -181,7 +181,7 @@ pub fn parse_tuner_status(status: &str, debug: Option<&str>) -> TunerStatus {
 
     let mut parsed = TunerStatus {
         channel: capture(&CHANNEL_RE, line).map(str::to_owned),
-        lock: LOCK_RE.is_match(line),
+        lock: capture(&LOCK_RE, line).is_some_and(|lock| lock != "none"),
         ss: number(&SS_RE, line),
         snq: number(&SNQ_RE, line),
         seq: number(&SEQ_RE, line),
