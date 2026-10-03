@@ -104,6 +104,11 @@ describe('channelFromStatus', () => {
     expect(channelFromStatus('auto6t:605028615', 'au')).toBe('39');
   });
 
+  test('Canada uses the US plan', () => {
+    expect(channelFromStatus('auto6t:605028615', 'ca')).toBe('36');
+    expect(formatChannelDisplay('auto6t:177000000', 'ca')).toBe('Channel 7');
+  });
+
   test('the AU 9A channel is recognised from its frequency', () => {
     expect(channelFromStatus('auto6t:205500000', 'au')).toBe('9A');
   });
