@@ -1,0 +1,2 @@
+0: sfi=0 mod=qam256 cod=10/15 layer=core ti=cti lls=1 lock=1
+1: sfi=0 mod=qpsk cod=6/15 layer=core ti=off lls=0 lock=0

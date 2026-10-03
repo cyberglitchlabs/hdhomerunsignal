@@ -1,0 +1,5 @@
+tun: ch=none lock=none ss=0 snq=0 seq=0 dbg=0
+dev: bps=0 resync=0 overflow=0
+ts:  bps=0 te=0 crc=0
+net: bps=0 pps=0 err=0 stop=0
+

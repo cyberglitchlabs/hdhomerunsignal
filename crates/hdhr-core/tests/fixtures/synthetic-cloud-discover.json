@@ -1,0 +1,5 @@
+[
+  {"DeviceID":"10548B20","LocalIP":"192.168.100.61","BaseURL":"http://192.168.100.61","DiscoverURL":"http://192.168.100.61/discover.json","LineupURL":"http://192.168.100.61/lineup.json"},
+  {"StorageID":"DVR-1","LocalIP":"192.168.100.70","StorageURL":"http://192.168.100.70:80/recorded_files.json"},
+  {"DeviceID":"1080ABCD"}
+]

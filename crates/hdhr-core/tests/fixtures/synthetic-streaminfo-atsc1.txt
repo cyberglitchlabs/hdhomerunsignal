@@ -1,0 +1,4 @@
+tsid=0x0645
+3: 2.1 MNPBS
+4: 2.4 MNKIDS (encrypted)
+5: 2.3 MNLIFE (no data)

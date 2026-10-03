@@ -1,0 +1,2 @@
+l1_basic_mode=1 l1_detail_mode=2 fft_size=8192
+guard_interval=gi5_1024 pilot_pattern=sp12_2

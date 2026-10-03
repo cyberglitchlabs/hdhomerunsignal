@@ -1,0 +1,1 @@
+ch=auto:34 lock=8vsb ss=86 snq=100 seq=100 bps=19494848 pps=0

@@ -1,0 +1,1 @@
+hdhomerun device 10548B20 found at 192.168.100.61
