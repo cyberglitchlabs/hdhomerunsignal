@@ -1182,7 +1182,8 @@ app.get('*', (req, res) => {
 
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, '0.0.0.0', () => {
-  console.log(`HDHomeRun Signal server running on port ${PORT}`);
+  // Report the bound port (not PORT) so PORT=0 is usable, e.g. by the tests.
+  console.log(`HDHomeRun Signal server running on port ${server.address().port}`);
 });
 
 // Node runs as PID 1 in a container, where signals without a handler are
