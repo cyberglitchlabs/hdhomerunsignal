@@ -4,6 +4,7 @@ import {
   REGIONS,
   channelFromStatus,
   channelToFrequency,
+  formatChannelDisplay,
   frequencyToChannel,
   getChannelRange,
   stepChannel,
@@ -96,6 +97,26 @@ describe('channelFromStatus', () => {
     expect(channelFromStatus('auto6t:100000000', 'us')).toBeNull();
   });
 
+  test('the same frequency is a different channel in different regions', () => {
+    // Why the CH field has to be recomputed when the region changes
+    expect(channelFromStatus('auto6t:605028615', 'us')).toBe('36');
+    expect(channelFromStatus('auto6t:605028615', 'eu')).toBe('37'); // 602 MHz is the nearest EU centre
+    expect(channelFromStatus('auto6t:605028615', 'au')).toBe('39');
+  });
+
+  test('the AU 9A channel is recognised from its frequency', () => {
+    expect(channelFromStatus('auto6t:205500000', 'au')).toBe('9A');
+  });
+
+  test('band edges stay inside the region plan', () => {
+    expect(channelFromStatus('auto6t:177000000', 'us')).toBe('7');
+    expect(channelFromStatus('auto6t:473000000', 'us')).toBe('14');
+    expect(channelFromStatus('auto6t:177500000', 'eu')).toBe('5');
+    expect(channelFromStatus('auto6t:474000000', 'eu')).toBe('21');
+    expect(channelFromStatus('auto6t:529500000', 'au')).toBe('28');
+    expect(channelFromStatus('auto6t:500000000', 'au')).toBeNull(); // below the AU UHF plan
+  });
+
   test('plain channel formats give the number', () => {
     expect(channelFromStatus('auto:4', 'us')).toBe('4');
     expect(channelFromStatus('13', 'us')).toBe('13');
@@ -104,6 +125,34 @@ describe('channelFromStatus', () => {
 
   test('anything without a number leaves the field alone', () => {
     expect(channelFromStatus('auto', 'us')).toBeNull();
+  });
+});
+
+describe('formatChannelDisplay', () => {
+  test('a stopped or missing channel is not tuned', () => {
+    expect(formatChannelDisplay('none', 'us')).toBe('Not tuned');
+    expect(formatChannelDisplay(undefined, 'us')).toBe('Not tuned');
+    expect(formatChannelDisplay('', 'us')).toBe('Not tuned');
+  });
+
+  test('plain channel formats give the channel', () => {
+    expect(formatChannelDisplay('auto:4', 'us')).toBe('Channel 4');
+    expect(formatChannelDisplay('27', 'eu')).toBe('Channel 27');
+  });
+
+  test('antenna mode labels a frequency-form channel for the selected region', () => {
+    expect(formatChannelDisplay('auto6t:605028615', 'us')).toBe('Channel 36');
+    expect(formatChannelDisplay('auto6t:605028615', 'eu')).toBe('Channel 37');
+    expect(formatChannelDisplay('auto6t:605028615', 'au')).toBe('Channel 39');
+    expect(formatChannelDisplay('auto6t:205500000', 'au')).toBe('Channel 9A');
+  });
+
+  test('a frequency the region cannot place is shown as reported', () => {
+    expect(formatChannelDisplay('auto6t:100000000', 'us')).toBe('auto6t:100000000');
+  });
+
+  test('a text-only channel is shown as reported', () => {
+    expect(formatChannelDisplay('auto', 'us')).toBe('auto');
   });
 });
 

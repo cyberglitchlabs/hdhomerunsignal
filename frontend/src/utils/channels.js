@@ -195,6 +195,15 @@ export function channelFromStatus(statusChannel, region) {
   return channelMatch ? channelMatch[1] : null;
 }
 
+// How a tuner's reported channel reads on screen, e.g. "Channel 27". A
+// frequency-form channel is converted using the region; one the region cannot
+// place is shown as reported.
+export function formatChannelDisplay(statusChannel, region) {
+  if (!statusChannel || statusChannel === 'none') return 'Not tuned';
+  const channel = channelFromStatus(statusChannel, region);
+  return channel ? `Channel ${channel}` : statusChannel;
+}
+
 // Frequency (Hz) for a stream URL from a status channel such as "auto:27".
 // A 9+ digit value is already a frequency; anything else is an RF channel.
 export function streamFrequency(statusChannel, region) {

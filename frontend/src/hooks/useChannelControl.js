@@ -37,7 +37,8 @@ export function useChannelControl({ selectedDevice, selectedTuner, region, chann
   // Leaving the page cancels any pending program fetch
   useEffect(() => () => programFetchGate.cancel(), []);
 
-  // Update directChannel input field when tuner status changes
+  // Update directChannel input field when the tuner status or the region
+  // changes (a frequency-form channel is a different channel number per region)
   useEffect(() => {
     if (tunerStatus?.channel) {
       if (tunerStatus.channel === 'none') {
@@ -49,7 +50,7 @@ export function useChannelControl({ selectedDevice, selectedTuner, region, chann
         if (channel) setDirectChannel(channel);
       }
     }
-  }, [tunerStatus?.channel]);
+  }, [tunerStatus?.channel, region]);
 
   // Auto-fetch programs when channel is already tuned on initial load or after tuner change
   useEffect(() => {
