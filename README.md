@@ -198,6 +198,7 @@ Perfect for aligning your antenna for optimal signal reception:
 | `HDHOMERUN_DEVICES` | Comma-separated list of device IPs or hostnames to manually add (supplements auto-discovery) | *(empty)* |
 | `HDHOMERUN_DISABLE_DISCOVERY` | Set to `true` to disable auto-discovery (use only manually specified devices) | `false` |
 | `HDHR_DISABLE_CLOUD_DISCOVERY` | Set to `true` to keep local broadcast discovery but never fall back to SiliconDust's cloud lookup (`ipv4-api.hdhomerun.com`) when the broadcast finds nothing. Has no effect when `HDHOMERUN_DISABLE_DISCOVERY=true`, which already disables both | `false` |
+| `HDHR_CLOUD_DISCOVERY_URL` | URL of the cloud discovery lookup. Meant for tests and alternative backends that need to stub it; `http://` and `https://` both work | `https://ipv4-api.hdhomerun.com/discover` |
 | `HDHR_ALLOWED_ORIGINS` | Comma-separated browser origins (e.g. `https://hdhr.example.com`) allowed to call the API cross-origin. Only needed if the UI is served from a different origin than the API | *(empty, same-origin only)* |
 | `HDHR_RATE_LIMIT` | Requests per minute allowed per client address (channel scans have a separate, stricter limit). `0` disables limiting | `300` |
 | `HDHR_TRUST_PROXY` | Which reverse proxies may set `X-Forwarded-For`, so rate limiting sees the real client address: a proxy hop count (`1`-`32`) or a comma-separated list of proxy IPs/CIDRs (e.g. `10.42.0.0/16`). `true`, `false`, `0` and zero-length prefixes such as `0.0.0.0/0` are refused, and **an invalid value stops the server from starting**. Leave unset if the app is not behind a proxy | *(empty, trust nothing)* |
@@ -303,6 +304,12 @@ To run in development mode:
 Run the tests with `npm test` in `/backend` and in `/frontend` (the frontend
 uses Vitest; `npm run test:watch` re-runs on change). `npm run build` in
 `/frontend` writes the production bundle to `frontend/build`.
+
+The backend tests are black-box: they spawn the server as a child process with a
+fake `hdhomerun_config` on `PATH`. Set `SERVER_CMD` to run them against a
+different implementation of the same HTTP contract, for example
+`SERVER_CMD=/path/to/hdhr-server npm test`. The command must print
+`running on port <n>` once it is listening.
 
 Pull requests are checked by CI: unit tests, `npm audit`, Dockerfile and workflow linting, secret scanning, dependency review, CodeQL, a Trivy scan of the built image, Helm chart validation, and a smoke test of the image under a read-only filesystem with all capabilities dropped. Pushes to `main` build, scan, publish and sign the image.
 

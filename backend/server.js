@@ -1,7 +1,7 @@
 const express = require('express');
-const { createServer } = require('http');
 const { Server } = require('socket.io');
 const { execFile } = require('child_process');
+const http = require('http');
 const https = require('https');
 const path = require('path');
 const rateLimit = require('express-rate-limit');
@@ -16,6 +16,10 @@ function hdhr(args, options, callback) {
   }
   return execFile('hdhomerun_config', args, options, callback);
 }
+
+// Where the cloud discovery fallback looks devices up. Overridable so tests (and
+// any non-Node build of this server) can point it at a local stub.
+const CLOUD_DISCOVERY_URL = process.env.HDHR_CLOUD_DISCOVERY_URL || 'https://ipv4-api.hdhomerun.com/discover';
 
 // The frontend is served by this server, so cross-origin access is off unless
 // origins are explicitly allowed (comma-separated) via HDHR_ALLOWED_ORIGINS.
@@ -36,7 +40,7 @@ function isOriginAllowed(origin, host) {
 }
 
 const app = express();
-const server = createServer(app);
+const server = http.createServer(app);
 const io = new Server(server, {
   allowRequest: (req, callback) => {
     callback(null, isOriginAllowed(req.headers.origin, req.headers.host));
@@ -230,7 +234,7 @@ class HDHomeRunController {
 
   async httpDiscoverDevices() {
     return new Promise((resolve) => {
-      const req = https.get('https://ipv4-api.hdhomerun.com/discover', (res) => {
+      const req = (CLOUD_DISCOVERY_URL.startsWith('https:') ? https : http).get(CLOUD_DISCOVERY_URL, (res) => {
         let data = '';
         res.on('data', chunk => { data += chunk; });
         res.on('end', () => {

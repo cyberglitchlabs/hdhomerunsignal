@@ -2,7 +2,8 @@ const { describe, test } = require('node:test');
 const assert = require('node:assert/strict');
 const { startServer, request } = require('./test-support');
 
-const CLOUD_URL = 'https://ipv4-api.hdhomerun.com/discover';
+// The cloud lookup is pointed at a local stub, so it shows up as a request path.
+const CLOUD_URL = '/discover';
 
 // Refreshes the device list (force=true is the explicit user refresh that is
 // allowed to use the cloud fallback) and returns what the server did.
@@ -14,7 +15,7 @@ async function refresh(env) {
     return {
       devices: JSON.parse(res.body),
       broadcasts: server.calls().filter((c) => c[0] === 'discover' && c.length === 1).length,
-      cloud: server.httpsCalls(),
+      cloud: server.cloudCalls(),
       output: server.output()
     };
   } finally {

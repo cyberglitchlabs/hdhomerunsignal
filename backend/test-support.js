@@ -41,21 +41,31 @@ function makeFakeTool() {
   fs.writeFileSync(bin, FAKE_TOOL, { mode: 0o755 });
   const log = path.join(dir, 'calls.log');
   fs.writeFileSync(log, '');
-  const httpsLog = path.join(dir, 'https.log');
-  fs.writeFileSync(httpsLog, '');
-  return { dir, log, httpsLog };
+  return { dir, log };
 }
+
+// The server under test: `node server.js` by default, or any other backend
+// implementing the same HTTP contract via SERVER_CMD (a command and optional
+// arguments separated by spaces, e.g. SERVER_CMD=target/debug/hdhr-server). It
+// must print "running on port <n>" once listening; that is how tests find it.
+function serverCommand() {
+  const [cmd, ...args] = (process.env.SERVER_CMD || '').split(/\s+/).filter(Boolean);
+  return cmd ? [cmd, args] : [process.execPath, [path.join(__dirname, 'server.js')]];
+}
+
+// Unroutable: nothing under test may reach the real cloud lookup. startServer
+// swaps in a local stub that records the requests instead.
+const NO_CLOUD_URL = 'http://127.0.0.1:9/discover';
 
 function spawnServer(env = {}) {
   const tool = makeFakeTool();
-  const proc = spawn(process.execPath, [path.join(__dirname, 'server.js')], {
+  const [cmd, args] = serverCommand();
+  const proc = spawn(cmd, args, {
     env: {
       ...process.env,
       PATH: `${tool.dir}${path.delimiter}${process.env.PATH}`,
       FAKE_HDHR_LOG: tool.log,
-      // The server never reaches the network under test; see test-https-stub.js.
-      FAKE_HTTPS_LOG: tool.httpsLog,
-      NODE_OPTIONS: `--require ${JSON.stringify(path.join(__dirname, 'test-https-stub.js'))}`,
+      HDHR_CLOUD_DISCOVERY_URL: NO_CLOUD_URL,
       PORT: '0',
       HDHOMERUN_DISABLE_DISCOVERY: 'true',
       HDHR_DISABLE_CLOUD_DISCOVERY: '',
@@ -78,8 +88,6 @@ function spawnServer(env = {}) {
 
   const calls = () => fs.readFileSync(tool.log, 'utf8')
     .split('\n').filter(Boolean).map((line) => JSON.parse(line));
-
-  const httpsCalls = () => fs.readFileSync(tool.httpsLog, 'utf8').split('\n').filter(Boolean);
 
   // Resolves with the bound port, or rejects if the server exits first.
   const ready = new Promise((resolve, reject) => {
@@ -104,7 +112,6 @@ function spawnServer(env = {}) {
     ready,
     output: () => output,
     calls,
-    httpsCalls,
     clearCalls: () => fs.writeFileSync(tool.log, ''),
     async stop() {
       if (proc.exitCode === null && proc.signalCode === null) proc.kill('SIGKILL');
@@ -115,9 +122,27 @@ function spawnServer(env = {}) {
   };
 }
 
-// Starts the server and resolves once it is listening.
+// Local stand-in for the cloud discovery API: answers with an empty device list
+// and records the path of every request.
+async function startCloudStub() {
+  const calls = [];
+  const stub = http.createServer((req, res) => {
+    calls.push(req.url);
+    res.setHeader('Content-Type', 'application/json');
+    res.end('[]');
+  });
+  await new Promise((resolve) => stub.listen(0, '127.0.0.1', resolve));
+  return { calls, url: `http://127.0.0.1:${stub.address().port}/discover`, close: () => stub.close() };
+}
+
+// Starts the server and resolves once it is listening. server.cloudCalls()
+// lists the request paths it sent to the cloud discovery stub.
 async function startServer(env) {
-  const server = spawnServer(env);
+  const stub = await startCloudStub();
+  const server = spawnServer({ HDHR_CLOUD_DISCOVERY_URL: stub.url, ...env });
+  server.cloudCalls = () => [...stub.calls];
+  const stop = server.stop;
+  server.stop = async () => { await stop(); stub.close(); };
   try {
     server.port = await server.ready;
   } catch (err) {
