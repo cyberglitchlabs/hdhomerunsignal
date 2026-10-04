@@ -30,6 +30,8 @@ pub struct Config {
     pub trust_proxy: TrustProxy,
     /// `HDHR_MAX_STREAMS_PER_CLIENT`: open event streams one client may hold; 0 removes the cap.
     pub max_streams_per_client: usize,
+    /// `HDHR_ENABLE_DOCS=true`: serve the interactive API reference at `/api/v1/docs`.
+    pub enable_docs: bool,
     /// `HDHR_STATIC_DIR`: the built frontend to serve.
     pub static_dir: PathBuf,
 }
@@ -93,6 +95,7 @@ impl Config {
             rate_limit,
             trust_proxy,
             max_streams_per_client,
+            enable_docs: flag("HDHR_ENABLE_DOCS"),
             static_dir: get("HDHR_STATIC_DIR")
                 .filter(|dir| !dir.is_empty())
                 .unwrap_or_else(|| "public".into())
@@ -122,7 +125,7 @@ mod tests {
             (3000, 300, 16)
         );
         assert!(c.manual_devices.is_empty() && c.allowed_origins.is_empty());
-        assert!(!c.disable_discovery && !c.disable_cloud_discovery);
+        assert!(!c.disable_discovery && !c.disable_cloud_discovery && !c.enable_docs);
         assert_eq!(c.trust_proxy, TrustProxy::Disabled);
         assert_eq!(
             c.cloud_discovery_url,
@@ -195,6 +198,17 @@ mod tests {
         );
         assert_eq!(config(&[("HDHR_RATE_LIMIT", "0")]).unwrap().rate_limit, 0);
         assert_eq!(config(&[("HDHR_RATE_LIMIT", "5")]).unwrap().rate_limit, 5);
+    }
+
+    #[test]
+    fn the_docs_page_is_off_unless_asked_for() {
+        for value in ["", "false", "1", "TRUE", "yes"] {
+            assert!(
+                !config(&[("HDHR_ENABLE_DOCS", value)]).unwrap().enable_docs,
+                "{value:?}"
+            );
+        }
+        assert!(config(&[("HDHR_ENABLE_DOCS", "true")]).unwrap().enable_docs);
     }
 
     #[test]

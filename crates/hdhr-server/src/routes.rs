@@ -6,18 +6,21 @@
 use std::net::SocketAddr;
 use std::sync::Arc;
 
+use axum::Json;
 use axum::body::Bytes;
 use axum::extract::{ConnectInfo, Path, RawQuery, Request, State};
-use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
-use axum::middleware::{self, Next};
+use axum::http::{Extensions, HeaderMap, HeaderValue, StatusCode, header};
+use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
-use axum::routing::{get, post};
-use axum::{Json, Router};
+use hdhr_core::model::{Device, DeviceInfo, PlpInfo, Program, ScannedChannel, TunerStatus};
 use hdhr_core::validate;
 use serde_json::{Value, json};
+use utoipa_axum::router::OpenApiRouter;
+use utoipa_axum::routes;
 
 use crate::discovery::discover_devices;
 use crate::error::ApiError;
+use crate::schema::{Atsc3Request, ChannelRequest, ErrorBody, StreamUrl, TuneResult, Version};
 use crate::state::AppState;
 use crate::stream;
 
@@ -26,35 +29,27 @@ pub(crate) type ApiResult<T> = Result<T, ApiError>;
 /// Largest request body accepted.
 pub const BODY_LIMIT: usize = 10 * 1024;
 
-pub fn api(state: Arc<AppState>) -> Router<Arc<AppState>> {
-    let scan = Router::new()
-        .route("/devices/{id}/scan/{tuner}", get(scan))
-        .route_layer(middleware::from_fn_with_state(state, scan_limit));
-
-    Router::new()
-        .route("/devices", get(list_devices))
-        .route("/devices/{id}/info", get(device_info))
-        .route("/devices/{id}/tuner/{tuner}/status", get(tuner_status))
-        .route("/devices/{id}/tuner/{tuner}/programs", get(programs))
-        .route("/devices/{id}/tuner/{tuner}/plpinfo", get(plp_info))
-        .route("/devices/{id}/tuner/{tuner}/l1info", get(l1_info))
-        .route("/devices/{id}/tuner/{tuner}/channel", post(set_channel))
-        .route("/devices/{id}/tuner/{tuner}/channel/up", post(channel_up))
-        .route(
-            "/devices/{id}/tuner/{tuner}/channel/down",
-            post(channel_down),
-        )
-        .route("/devices/{id}/tuner/{tuner}/clear", post(clear_tuner))
-        .route("/devices/{id}/tuner/{tuner}/atsc3", post(set_atsc3))
-        .route("/devices/{id}/stream/url", get(stream_url))
-        .route("/devices/{id}/stream/play.m3u", get(playlist))
-        .route(
-            "/devices/{id}/tuner/{tuner}/stream",
-            get(stream::tuner_stream),
-        )
-        .route("/devices/{id}/antenna/stream", get(stream::antenna_stream))
-        .route("/version", get(version))
-        .merge(scan)
+/// The API's routes, each registered together with its entry in the OpenAPI spec,
+/// so a route without documentation (or the reverse) cannot exist.
+pub fn api() -> OpenApiRouter<Arc<AppState>> {
+    OpenApiRouter::new()
+        .routes(routes!(list_devices))
+        .routes(routes!(device_info))
+        .routes(routes!(scan))
+        .routes(routes!(tuner_status))
+        .routes(routes!(programs))
+        .routes(routes!(plp_info))
+        .routes(routes!(l1_info))
+        .routes(routes!(set_channel))
+        .routes(routes!(channel_up))
+        .routes(routes!(channel_down))
+        .routes(routes!(clear_tuner))
+        .routes(routes!(set_atsc3))
+        .routes(routes!(stream_url))
+        .routes(routes!(playlist))
+        .routes(routes!(stream::tuner_stream))
+        .routes(routes!(stream::antenna_stream))
+        .routes(routes!(version))
 }
 
 // ----------------------------------------------------------------- validation
@@ -142,14 +137,8 @@ pub async fn general_limit(
     if is_stream_path(request.uri().path()) {
         return next.run(request).await;
     }
-    match limit(&state, &state.general_limiter, &request) {
-        Some(refused) => refused,
-        None => next.run(request).await,
-    }
-}
-
-async fn scan_limit(State(state): State<Arc<AppState>>, request: Request, next: Next) -> Response {
-    match limit(&state, &state.scan_limiter, &request) {
+    let peer = request.extensions().get::<ConnectInfo<SocketAddr>>();
+    match limit(&state, &state.general_limiter, peer, request.headers()) {
         Some(refused) => refused,
         None => next.run(request).await,
     }
@@ -158,14 +147,10 @@ async fn scan_limit(State(state): State<Arc<AppState>>, request: Request, next: 
 fn limit(
     state: &AppState,
     limiter: &crate::limits::RateLimiter,
-    request: &Request,
+    peer: Option<&ConnectInfo<SocketAddr>>,
+    headers: &HeaderMap,
 ) -> Option<Response> {
-    let client = client_key(
-        state,
-        request.extensions().get::<ConnectInfo<SocketAddr>>(),
-        request.headers(),
-    );
-    let wait = limiter.hit(&client).err()?;
+    let wait = limiter.hit(&client_key(state, peer, headers)).err()?;
     let mut response = ApiError::too_many("Too many requests").into_response();
     if let Ok(seconds) = HeaderValue::from_str(&wait.as_secs().max(1).to_string()) {
         response.headers_mut().insert(header::RETRY_AFTER, seconds);
@@ -206,6 +191,15 @@ fn is_stream_path(path: &str) -> bool {
 
 // -------------------------------------------------------------------- handlers
 
+#[utoipa::path(
+    get,
+    path = "/devices",
+    tag = "devices",
+    summary = "List devices",
+    description = "The devices to offer. Found by local broadcast; if that finds nothing, by SiliconDust's cloud lookup (unless disabled); plus any devices configured by address. The cloud result is kept until a refresh.",
+    params(("force" = Option<bool>, Query, description = "`true` is the user pressing Refresh: it forgets remembered devices and allows the cloud lookup to run again. Any other value is ignored.")),
+    responses((status = 200, description = "The devices.", body = Vec<Device>), (status = 429, description = "Too many requests from this client.", body = ErrorBody))
+)]
 async fn list_devices(
     State(state): State<Arc<AppState>>,
     RawQuery(query): RawQuery,
@@ -214,6 +208,14 @@ async fn list_devices(
     Json(discover_devices(&state, force).await)
 }
 
+#[utoipa::path(
+    get,
+    path = "/devices/{id}/info",
+    tag = "devices",
+    summary = "Device model and tuner count",
+    params(("id" = String, Path, description = "A device ID (e.g. `1080ABCD`), IPv4 address or hostname: letters, digits, dots and hyphens, starting with a letter or digit, at most 253 characters.")),
+    responses((status = 200, description = "The device. An unreachable one is reported as model `Unknown` with two tuners.", body = DeviceInfo), (status = 400, description = "A device, tuner or parameter is not valid.", body = ErrorBody))
+)]
 async fn device_info(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
@@ -221,11 +223,31 @@ async fn device_info(
     Ok(Json(state.hdhr.device_info(device(&id)?).await))
 }
 
+#[utoipa::path(
+    get,
+    path = "/devices/{id}/scan/{tuner}",
+    tag = "tuners",
+    summary = "Scan for channels",
+    description = "Scans a channel map on one tuner and returns the channels that locked, with their programs. This occupies the tuner and can take two minutes. Limited to 6 requests a minute per client.",
+    params(("id" = String, Path, description = "A device ID (e.g. `1080ABCD`), IPv4 address or hostname: letters, digits, dots and hyphens, starting with a letter or digit, at most 253 characters."), ("tuner" = u8, Path, description = "The tuner index, 0 to 7.", minimum = 0, maximum = 7), ("channelMap" = Option<String>, Query, description = "One of `us-bcast` (the default), `us-cable`, `us-hrc`, `us-irc`, `ca-bcast`, `ca-cable`, `ca-hrc`, `ca-irc`, `eu-bcast`, `eu-cable`, `au-bcast`, `au-cable`. Giving it twice is an error.")),
+    responses((status = 200, description = "The channels that locked.", body = Vec<ScannedChannel>), (status = 400, description = "A device, tuner or parameter is not valid.", body = ErrorBody), (status = 429, description = "Too many requests from this client.", body = ErrorBody), (status = 500, description = "The device or the tool reported an error.", body = ErrorBody))
+)]
 async fn scan(
     State(state): State<Arc<AppState>>,
     Path((id, tuner_text)): Path<(String, String)>,
     RawQuery(query): RawQuery,
-) -> ApiResult<impl IntoResponse> {
+    extensions: Extensions,
+    headers: HeaderMap,
+) -> ApiResult<Response> {
+    // A scan occupies a tuner for up to a minute, so it has a limit of its own.
+    if let Some(refused) = limit(
+        &state,
+        &state.scan_limiter,
+        extensions.get::<ConnectInfo<SocketAddr>>(),
+        &headers,
+    ) {
+        return Ok(refused);
+    }
     let (id, tuner) = device_and_tuner(&id, &tuner_text)?;
     let query = Query::new(query);
     // Absent means the default; a repeated or unknown map is refused.
@@ -236,9 +258,17 @@ async fn scan(
     };
     let channel_map = validate::channel_map(requested)
         .ok_or_else(|| ApiError::bad_request("Invalid channelMap"))?;
-    Ok(Json(state.hdhr.scan(id, tuner, channel_map).await?))
+    Ok(Json(state.hdhr.scan(id, tuner, channel_map).await?).into_response())
 }
 
+#[utoipa::path(
+    get,
+    path = "/devices/{id}/tuner/{tuner}/status",
+    tag = "tuners",
+    summary = "Tuner status",
+    params(("id" = String, Path, description = "A device ID (e.g. `1080ABCD`), IPv4 address or hostname: letters, digits, dots and hyphens, starting with a letter or digit, at most 253 characters."), ("tuner" = u8, Path, description = "The tuner index, 0 to 7.", minimum = 0, maximum = 7)),
+    responses((status = 200, description = "One reading, or null when the tuner did not answer.", body = Option<TunerStatus>), (status = 400, description = "A device, tuner or parameter is not valid.", body = ErrorBody))
+)]
 async fn tuner_status(
     State(state): State<Arc<AppState>>,
     Path((id, t)): Path<(String, String)>,
@@ -247,6 +277,15 @@ async fn tuner_status(
     Ok(Json(state.hdhr.tuner_status(id, tuner).await))
 }
 
+#[utoipa::path(
+    get,
+    path = "/devices/{id}/tuner/{tuner}/programs",
+    tag = "tuners",
+    summary = "Programs on the tuned channel",
+    description = "Empty unless the tuner has a lock. Right after a channel change the device can need a few seconds, so this retries for up to about 7 seconds.",
+    params(("id" = String, Path, description = "A device ID (e.g. `1080ABCD`), IPv4 address or hostname: letters, digits, dots and hyphens, starting with a letter or digit, at most 253 characters."), ("tuner" = u8, Path, description = "The tuner index, 0 to 7.", minimum = 0, maximum = 7)),
+    responses((status = 200, description = "The programs.", body = Vec<Program>), (status = 400, description = "A device, tuner or parameter is not valid.", body = ErrorBody))
+)]
 async fn programs(
     State(state): State<Arc<AppState>>,
     Path((id, t)): Path<(String, String)>,
@@ -255,6 +294,14 @@ async fn programs(
     Ok(Json(state.hdhr.programs(id, tuner).await))
 }
 
+#[utoipa::path(
+    get,
+    path = "/devices/{id}/tuner/{tuner}/plpinfo",
+    tag = "tuners",
+    summary = "ATSC 3.0 PLP details",
+    params(("id" = String, Path, description = "A device ID (e.g. `1080ABCD`), IPv4 address or hostname: letters, digits, dots and hyphens, starting with a letter or digit, at most 253 characters."), ("tuner" = u8, Path, description = "The tuner index, 0 to 7.", minimum = 0, maximum = 7)),
+    responses((status = 200, description = "The PLPs by id, or null when the device reports none or has no ATSC 3.0 support.", body = Option<HashMap<String, PlpInfo>>), (status = 400, description = "A device, tuner or parameter is not valid.", body = ErrorBody))
+)]
 async fn plp_info(
     State(state): State<Arc<AppState>>,
     Path((id, t)): Path<(String, String)>,
@@ -263,6 +310,14 @@ async fn plp_info(
     Ok(Json(state.plp.plp_or_none(&state.hdhr, id, tuner).await))
 }
 
+#[utoipa::path(
+    get,
+    path = "/devices/{id}/tuner/{tuner}/l1info",
+    tag = "tuners",
+    summary = "ATSC 3.0 L1 signalling",
+    params(("id" = String, Path, description = "A device ID (e.g. `1080ABCD`), IPv4 address or hostname: letters, digits, dots and hyphens, starting with a letter or digit, at most 253 characters."), ("tuner" = u8, Path, description = "The tuner index, 0 to 7.", minimum = 0, maximum = 7)),
+    responses((status = 200, description = "The raw key/value pairs, or null when the device reports none.", body = Option<HashMap<String, String>>), (status = 400, description = "A device, tuner or parameter is not valid.", body = ErrorBody))
+)]
 async fn l1_info(
     State(state): State<Arc<AppState>>,
     Path((id, t)): Path<(String, String)>,
@@ -275,6 +330,15 @@ fn done(result: String) -> Json<Value> {
     Json(json!({ "success": true, "result": result }))
 }
 
+#[utoipa::path(
+    post,
+    path = "/devices/{id}/tuner/{tuner}/channel",
+    tag = "tuning",
+    summary = "Tune a channel",
+    params(("id" = String, Path, description = "A device ID (e.g. `1080ABCD`), IPv4 address or hostname: letters, digits, dots and hyphens, starting with a letter or digit, at most 253 characters."), ("tuner" = u8, Path, description = "The tuner index, 0 to 7.", minimum = 0, maximum = 7)),
+    request_body(content = ChannelRequest, description = "The channel must be a string; a JSON number is refused here (but accepted by the `atsc3` endpoint)."),
+    responses((status = 200, description = "Tuned.", body = TuneResult), (status = 400, description = "A device, tuner or parameter is not valid.", body = ErrorBody), (status = 500, description = "The device or the tool reported an error.", body = ErrorBody))
+)]
 async fn set_channel(
     State(state): State<Arc<AppState>>,
     Path((id, t)): Path<(String, String)>,
@@ -291,6 +355,14 @@ async fn set_channel(
     Ok(done(state.hdhr.set_channel(id, tuner, channel).await?))
 }
 
+#[utoipa::path(
+    post,
+    path = "/devices/{id}/tuner/{tuner}/channel/up",
+    tag = "tuning",
+    summary = "Next channel",
+    params(("id" = String, Path, description = "A device ID (e.g. `1080ABCD`), IPv4 address or hostname: letters, digits, dots and hyphens, starting with a letter or digit, at most 253 characters."), ("tuner" = u8, Path, description = "The tuner index, 0 to 7.", minimum = 0, maximum = 7)),
+    responses((status = 200, description = "Tuned.", body = TuneResult), (status = 400, description = "A device, tuner or parameter is not valid.", body = ErrorBody), (status = 500, description = "The device or the tool reported an error.", body = ErrorBody))
+)]
 async fn channel_up(
     State(state): State<Arc<AppState>>,
     Path((id, t)): Path<(String, String)>,
@@ -299,6 +371,14 @@ async fn channel_up(
     Ok(done(state.hdhr.channel_up(id, tuner).await?))
 }
 
+#[utoipa::path(
+    post,
+    path = "/devices/{id}/tuner/{tuner}/channel/down",
+    tag = "tuning",
+    summary = "Previous channel",
+    params(("id" = String, Path, description = "A device ID (e.g. `1080ABCD`), IPv4 address or hostname: letters, digits, dots and hyphens, starting with a letter or digit, at most 253 characters."), ("tuner" = u8, Path, description = "The tuner index, 0 to 7.", minimum = 0, maximum = 7)),
+    responses((status = 200, description = "Tuned.", body = TuneResult), (status = 400, description = "A device, tuner or parameter is not valid.", body = ErrorBody), (status = 500, description = "The device or the tool reported an error.", body = ErrorBody))
+)]
 async fn channel_down(
     State(state): State<Arc<AppState>>,
     Path((id, t)): Path<(String, String)>,
@@ -307,6 +387,14 @@ async fn channel_down(
     Ok(done(state.hdhr.channel_down(id, tuner).await?))
 }
 
+#[utoipa::path(
+    post,
+    path = "/devices/{id}/tuner/{tuner}/clear",
+    tag = "tuning",
+    summary = "Stop the tuner",
+    params(("id" = String, Path, description = "A device ID (e.g. `1080ABCD`), IPv4 address or hostname: letters, digits, dots and hyphens, starting with a letter or digit, at most 253 characters."), ("tuner" = u8, Path, description = "The tuner index, 0 to 7.", minimum = 0, maximum = 7)),
+    responses((status = 200, description = "Cleared.", body = TuneResult), (status = 400, description = "A device, tuner or parameter is not valid.", body = ErrorBody), (status = 500, description = "The device or the tool reported an error.", body = ErrorBody))
+)]
 async fn clear_tuner(
     State(state): State<Arc<AppState>>,
     Path((id, t)): Path<(String, String)>,
@@ -315,6 +403,16 @@ async fn clear_tuner(
     Ok(done(state.hdhr.clear_tuner(id, tuner).await?))
 }
 
+#[utoipa::path(
+    post,
+    path = "/devices/{id}/tuner/{tuner}/atsc3",
+    tag = "tuning",
+    summary = "Tune an ATSC 3.0 channel",
+    description = "Builds `atsc3:<channel>[:<plp>+<plp>...]` from validated parts.",
+    params(("id" = String, Path, description = "A device ID (e.g. `1080ABCD`), IPv4 address or hostname: letters, digits, dots and hyphens, starting with a letter or digit, at most 253 characters."), ("tuner" = u8, Path, description = "The tuner index, 0 to 7.", minimum = 0, maximum = 7)),
+    request_body = Atsc3Request,
+    responses((status = 200, description = "Tuned.", body = TuneResult), (status = 400, description = "The channel or the PLPs are not valid.", body = ErrorBody), (status = 500, description = "The device or the tool reported an error.", body = ErrorBody))
+)]
 async fn set_atsc3(
     State(state): State<Arc<AppState>>,
     Path((id, t)): Path<(String, String)>,
@@ -360,6 +458,15 @@ fn program_url(state: &AppState, id: &str, query: &Query) -> ApiResult<(String, 
     ))
 }
 
+#[utoipa::path(
+    get,
+    path = "/devices/{id}/stream/url",
+    tag = "streaming",
+    summary = "URL of a program",
+    description = "The URL a player can open to watch one program, by RF channel and program number, which avoids two stations sharing a virtual channel. Only devices on the current device list are served.",
+    params(("id" = String, Path, description = "A device ID (e.g. `1080ABCD`), IPv4 address or hostname: letters, digits, dots and hyphens, starting with a letter or digit, at most 253 characters."), ("ch" = String, Query, description = "The RF channel, as digits (1 to 10)."), ("program" = String, Query, description = "The program number, as digits (1 to 10).")),
+    responses((status = 200, description = "The URL.", body = StreamUrl), (status = 400, description = "`ch` or `program` is missing or not digits.", body = ErrorBody), (status = 404, description = "The device is not on the list.", body = ErrorBody))
+)]
 async fn stream_url(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
@@ -369,6 +476,15 @@ async fn stream_url(
     Ok(Json(json!({ "url": url })))
 }
 
+#[utoipa::path(
+    get,
+    path = "/devices/{id}/stream/play.m3u",
+    tag = "streaming",
+    summary = "M3U playlist for a program",
+    description = "A one-entry playlist, sent as a download.",
+    params(("id" = String, Path, description = "A device ID (e.g. `1080ABCD`), IPv4 address or hostname: letters, digits, dots and hyphens, starting with a letter or digit, at most 253 characters."), ("ch" = String, Query, description = "The RF channel, as digits (1 to 10)."), ("program" = String, Query, description = "The program number, as digits (1 to 10)."), ("name" = Option<String>, Query, description = "A label for the entry; control characters are removed and it is cut at 64 characters.")),
+    responses((status = 200, description = "The playlist.", content_type = "audio/x-mpegurl", body = String), (status = 400, description = "`ch` or `program` is missing or not digits.", body = ErrorBody), (status = 404, description = "The device is not on the list.", body = ErrorBody))
+)]
 async fn playlist(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
@@ -413,6 +529,14 @@ async fn playlist(
 }
 
 /// What the built frontend says about itself, for the update check.
+#[utoipa::path(
+    get,
+    path = "/version",
+    tag = "app",
+    summary = "Frontend build version",
+    description = "Read by the page to find out whether a newer build is available.",
+    responses((status = 200, description = "The build.", body = Version))
+)]
 async fn version(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     let path = state.config.static_dir.join("build-version.json");
     let version = tokio::fs::read(&path)

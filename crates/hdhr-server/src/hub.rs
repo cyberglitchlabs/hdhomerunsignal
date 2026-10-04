@@ -14,10 +14,11 @@ use std::time::Duration;
 use hdhr_client::Hdhr;
 use hdhr_core::model::PlpMap;
 use hdhr_core::validate::log_safe;
-use serde_json::{Map, Value, json};
 use tokio::sync::watch;
 use tokio::task::JoinHandle;
 use tokio::time::Instant;
+
+use crate::schema::{AntennaEvent, AntennaReading, TunerEvent};
 
 /// What a stream watches.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -233,27 +234,24 @@ async fn poll_tuner(
 
     // A tuner that did not answer still gets an event, with no channel or lock in
     // it, so the page can tell the device is not reporting.
-    let mut data = match status.map(serde_json::to_value) {
-        Some(Ok(Value::Object(fields))) => fields,
-        _ => Map::new(),
-    };
-    data.insert("currentProgram".into(), json!(program));
-    data.insert("plpInfo".into(), json!(plp_info.flatten()));
-    data.insert("l1Info".into(), json!(l1_info.flatten()));
+    let event = TunerEvent::new(status, program, plp_info.flatten(), l1_info.flatten());
     Message {
         event: "tuner-status",
-        data: Value::Object(data).to_string(),
+        data: serde_json::to_string(&event).expect("a tuner event serializes"),
     }
 }
 
 async fn poll_antenna(hdhr: &Hdhr, device: &str, tuners: u8, limit: Duration) -> Message {
-    let readings = futures_util::future::join_all((0..tuners).map(|tuner| async move {
-        let status = bounded(limit, hdhr.tuner_status(device, tuner)).await;
-        json!({ "tuner": tuner, "status": status })
-    }))
-    .await;
+    let readings: AntennaEvent =
+        futures_util::future::join_all((0..tuners).map(|tuner| async move {
+            AntennaReading {
+                tuner,
+                status: bounded(limit, hdhr.tuner_status(device, tuner)).await,
+            }
+        }))
+        .await;
     Message {
         event: "antenna-mode-status",
-        data: Value::Array(readings).to_string(),
+        data: serde_json::to_string(&readings).expect("antenna readings serialize"),
     }
 }
