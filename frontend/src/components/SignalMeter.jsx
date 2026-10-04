@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react';
-import { Box, Grid } from '@mui/material';
+import { useState } from 'react';
+import { Alert, Box, Button, Grid } from '@mui/material';
 import AntennaMode from './AntennaMode';
 import Atsc3Panels from './signal/Atsc3Panels';
 import ChannelControls from './signal/ChannelControls';
@@ -10,9 +10,10 @@ import StreamContextMenu from './signal/StreamContextMenu';
 import TunerMeters from './signal/TunerMeters';
 import TunerSettings from './signal/TunerSettings';
 import { useChannelControl } from '../hooks/useChannelControl';
-import { clampTuner, useDevices } from '../hooks/useDevices';
+import { useDevices } from '../hooks/useDevices';
 import { useInstallPrompt } from '../hooks/useInstallPrompt';
 import { useRegion } from '../hooks/useRegion';
+import { useSelectedTuner } from '../hooks/useSelectedTuner';
 import { useSignalHistory } from '../hooks/useSignalHistory';
 import { statsKey, useSignalStats } from '../hooks/useSignalStats';
 import { useEventStream } from '../hooks/useEventStream';
@@ -21,8 +22,11 @@ import { getChannelRange } from '../utils/channels';
 
 function SignalMeter() {
   const { region, channelMap, setChannelMap, changeRegion } = useRegion();
-  const { devices, selectedDevice, selectDevice, deviceInfo, loading, discoverDevices } = useDevices();
-  const [selectedTuner, setSelectedTuner] = useState(0);
+  const {
+    devices, selectedDevice, selectDevice, deviceInfo, infoError, retryDeviceInfo, loading, discoverDevices
+  } = useDevices();
+  // Already valid for the device, so no stream or request uses a tuner it lacks
+  const [selectedTuner, setSelectedTuner] = useSelectedTuner(deviceInfo);
   const [antennaMode, setAntennaMode] = useState(false);
   const [allTunersData, setAllTunersData] = useState([]);
   const [contextMenu, setContextMenu] = useState(null); // { mouseX, mouseY, program }
@@ -57,13 +61,6 @@ function SignalMeter() {
     clearTuner
   } = useChannelControl({ selectedDevice, selectedTuner, region, channelMap, tunerStatus, clearAtsc3Info });
 
-  // Whichever way the device changed (picker, Refresh, discovery), move off a
-  // tuner the new device doesn't have. Channel data is reset by useChannelControl.
-  useEffect(() => {
-    const tuner = clampTuner(selectedTuner, deviceInfo);
-    if (tuner !== selectedTuner) setSelectedTuner(tuner);
-  }, [deviceInfo, selectedTuner]);
-
   const showTunerPanels = !antennaMode && selectedDevice;
 
   return (
@@ -83,6 +80,17 @@ function SignalMeter() {
           showInstallButton={showInstallButton}
           onInstall={install}
         />
+
+        {infoError && selectedDevice && (
+          <Grid item xs={12}>
+            <Alert
+              severity="warning"
+              action={<Button color="inherit" size="small" onClick={retryDeviceInfo}>Retry</Button>}
+            >
+              Could not load this device's details, so it is assumed to have {deviceInfo?.tuners} tuners.
+            </Alert>
+          </Grid>
+        )}
 
         {/* Antenna Tuning Mode */}
         {antennaMode && selectedDevice && (
