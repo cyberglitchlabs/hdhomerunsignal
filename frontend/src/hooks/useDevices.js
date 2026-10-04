@@ -11,8 +11,13 @@ export function chooseDevice(devices, currentId) {
   return online.find(d => d.id === currentId) || online[0] || null;
 }
 
-// Tuner count assumed when a device's info cannot be loaded
-export const FALLBACK_DEVICE_INFO = { tuners: 2 };
+// Tuner count assumed when a device's info cannot be loaded. `assumed` marks it as
+// a guess, so it is never taken for what the device said.
+export const FALLBACK_DEVICE_INFO = { tuners: 2, assumed: true };
+
+// How long the info request may take. Monitoring waits for it, so a hung request
+// must become the fallback in bounded time.
+export const INFO_TIMEOUT_MS = 5000;
 
 /** The tuner to use on a device: the current one, or the last one if it doesn't have that many. */
 export function clampTuner(tuner, deviceInfo) {
@@ -58,7 +63,7 @@ export function useDevices() {
     setSelectedDevice(deviceId);
 
     try {
-      const response = await axios.get(`/api/v1/devices/${deviceId}/info`);
+      const response = await axios.get(`/api/v1/devices/${deviceId}/info`, { timeout: INFO_TIMEOUT_MS });
       console.log('Device info received:', response.data);
       if (isCurrent()) setDeviceInfo(response.data);
       return response.data;
