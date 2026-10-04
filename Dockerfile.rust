@@ -46,7 +46,13 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
 # and the CA certificates its cloud lookup needs. No compilers, curl or Node.
 FROM ${RUNTIME_IMAGE} AS runtime
 
+# The base image is rebuilt only now and then, so it can lag behind security fixes
+# Debian has already published (the image scan fails the build on a HIGH one). The
+# upgrade brings the runtime image up to date with them. That costs bit-for-bit
+# reproducibility of the base layers, which is the lesser evil here.
+# hadolint ignore=DL3005
 RUN apt-get update \
+    && apt-get -y --no-install-recommends upgrade \
     && apt-get install -y --no-install-recommends ca-certificates hdhomerun-config \
     && rm -rf /var/lib/apt/lists/*
 
