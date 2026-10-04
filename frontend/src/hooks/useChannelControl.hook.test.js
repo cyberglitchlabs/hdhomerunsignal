@@ -139,3 +139,45 @@ describe('the CH field follows the region and channel map', () => {
     expect(result.current.directChannel).toBe('31');
   });
 });
+
+describe('tuning with a channel map that is not the device\'s', () => {
+  const base = { selectedDevice: 'A', selectedTuner: 0, region: 'us' };
+  const post = () => axios.post.mock.calls.at(-1);
+
+  async function tuneTo(channel, props) {
+    const { result } = renderHook((p) => useBoth(p), { initialProps: { ...base, ...props } });
+    await act(() => result.current.tuneToDirectChannel(channel));
+    return result;
+  }
+
+  test("tunes by the typed number while the device's own map is in use", async () => {
+    await tuneTo('27', { channelMap: 'us-bcast', deviceChannelMap: 'us-bcast' });
+    expect(post()).toEqual(['/api/v1/devices/A/tuner/0/channel', { channel: '27' }]);
+  });
+
+  test("tunes by frequency when the chosen map differs from the device's, never changing the device's map", async () => {
+    await tuneTo('27', { channelMap: 'us-cable', deviceChannelMap: 'us-bcast' });
+    expect(post()).toEqual(['/api/v1/devices/A/tuner/0/channel', { channel: 'auto:243000000' }]);
+    expect(axios.post).toHaveBeenCalledTimes(1);
+    expect(axios.post.mock.calls.every(([url]) => url.endsWith('/channel'))).toBe(true);
+  });
+
+  test('stepping uses the same rule', async () => {
+    const { result } = renderHook((p) => useBoth(p), {
+      initialProps: { ...base, channelMap: 'us-cable', deviceChannelMap: 'us-bcast' }
+    });
+    act(() => result.current.setDirectChannel('27'));
+    await act(() => result.current.incrementChannel());
+    expect(post()).toEqual(['/api/v1/devices/A/tuner/0/channel', { channel: 'auto:249000000' }]); // channel 28
+  });
+
+  test('a channel the chosen map does not have is not sent', async () => {
+    await tuneTo('159', { channelMap: 'us-cable', deviceChannelMap: 'us-bcast' });
+    expect(axios.post).not.toHaveBeenCalled();
+  });
+
+  test('without a known device map it tunes by the typed number, as before', async () => {
+    await tuneTo('27', { channelMap: 'us-cable' });
+    expect(post()).toEqual(['/api/v1/devices/A/tuner/0/channel', { channel: '27' }]);
+  });
+});
