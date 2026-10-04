@@ -28,7 +28,7 @@ function SignalMeter() {
   const [contextMenu, setContextMenu] = useState(null); // { mouseX, mouseY, program }
   const { showInstallButton, install } = useInstallPrompt();
 
-  const { tunerStatus, plpInfo, l1Info, isAtsc3Channel, handleTunerStatus, clearAtsc3Info } = useTunerState();
+  const { tunerStatus, plpInfo, l1Info, isAtsc3Channel, handleTunerStatus, clearAtsc3Info } = useTunerState(`${selectedDevice}/${selectedTuner}`);
   // Rolling signal/SNR history for the chart. Restarts with the channel (same key
   // as the session start/peak markers) and only records readings with a lock.
   const signalHistory = useSignalHistory(tunerStatus, {
