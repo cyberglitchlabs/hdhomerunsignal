@@ -23,3 +23,12 @@ Dockerfile
 .env
 .env.*
 **/*.log
+
+# The Rust build (Dockerfile.rust) compiles inside the image from the sources
+# only. The pinned toolchain file is left out so the image uses its own toolchain.
+target
+crates/*/tests
+api
+deny.toml
+rust-toolchain.toml
+Dockerfile.rust

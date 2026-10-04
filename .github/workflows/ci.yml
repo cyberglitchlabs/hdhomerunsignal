@@ -94,10 +94,12 @@ jobs:
         with:
           image: ${{ env.HADOLINT_IMAGE }}
       - name: hadolint
-        run: >
-          docker run --rm -i -v "$PWD/.hadolint.yaml:/.config/hadolint.yaml:ro"
-          "$HADOLINT_IMAGE"
-          < Dockerfile
+        run: |
+          for dockerfile in Dockerfile Dockerfile.rust; do
+            echo "== $dockerfile"
+            docker run --rm -i -v "$PWD/.hadolint.yaml:/.config/hadolint.yaml:ro" \
+              "$HADOLINT_IMAGE" < "$dockerfile"
+          done
 
   secrets:
     name: Secret scan
@@ -170,6 +172,114 @@ jobs:
             -p 3000:3000 hdhomerun-signal:ci
           for _ in $(seq 1 20); do
             curl -fsS http://127.0.0.1:3000/api/version && exit 0
+            sleep 1
+          done
+          docker logs smoke
+          exit 1
+
+  rust:
+    name: Rust format, clippy and tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # rustup is on the runner. With no arguments it installs the toolchain that
+      # rust-toolchain.toml pins, components included.
+      - name: Install the pinned Rust toolchain
+        run: rustup toolchain install --no-self-update
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - run: cargo fmt --all --check
+      - run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - run: cargo test --workspace --locked
+
+  rust-deny:
+    name: Rust dependency policy and advisories
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # Licences, sources and RustSec advisories, as set in deny.toml.
+      - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
+        with:
+          command: check
+
+  parity:
+    name: Black-box tests against the Rust server
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      # rustup is on the runner. With no arguments it installs the toolchain that
+      # rust-toolchain.toml pins, components included.
+      - name: Install the pinned Rust toolchain
+        run: rustup toolchain install --no-self-update
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - run: cargo build --locked -p hdhr-server
+      - run: npm ci
+        working-directory: backend
+      # The backend's own tests, run against the Rust binary instead of server.js.
+      - name: Run the black-box tests
+        working-directory: backend
+        env:
+          SERVER_API_PREFIX: /api/v1
+        run: SERVER_CMD="$GITHUB_WORKSPACE/target/debug/hdhr-server" npm test
+
+  image-rust:
+    name: Build, scan and smoke-test the Rust image
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - name: Build (not pushed)
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: Dockerfile.rust
+          load: true
+          push: false
+          tags: hdhomerun-signal:rust-ci
+          cache-from: type=gha,scope=rust-image
+          cache-to: type=gha,scope=rust-image,mode=max
+      - name: Trivy vulnerability scan
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: hdhomerun-signal:rust-ci
+          scanners: vuln
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+      - name: Smoke test under restricted runtime settings
+        run: |
+          docker run -d --name smoke --read-only --tmpfs /tmp --cap-drop ALL \
+            --security-opt no-new-privileges -e HDHOMERUN_DISABLE_DISCOVERY=true \
+            -p 3000:3000 hdhomerun-signal:rust-ci
+          for _ in $(seq 1 20); do
+            if curl -fsS http://127.0.0.1:3000/api/v1/version; then
+              # The image's own HEALTHCHECK command, run inside the container.
+              docker exec smoke hdhr-server --healthcheck && exit 0
+            fi
             sleep 1
           done
           docker logs smoke

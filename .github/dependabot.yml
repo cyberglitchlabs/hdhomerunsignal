@@ -36,3 +36,13 @@ updates:
     groups:
       frontend:
         patterns: ["*"]
+
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      rust:
+        patterns: ["*"]
