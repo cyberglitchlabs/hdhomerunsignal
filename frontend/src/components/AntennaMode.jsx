@@ -40,7 +40,7 @@ function TunerHistoryCharts({ status }) {
   );
 }
 
-function AntennaMode({ allTunersData, region }) {
+function AntennaMode({ allTunersData, region, channelMap }) {
   const getSymbolColor = (symbolQuality) => {
     if (symbolQuality === 100) return 'success';
     if (symbolQuality > 0) return 'error';
@@ -88,7 +88,7 @@ function AntennaMode({ allTunersData, region }) {
 
                 {status?.channel && status.channel !== 'none' && (
                   <Typography variant="body2" sx={{ fontSize: '0.8rem', mb: 1, color: 'text.secondary' }}>
-                    {formatChannelDisplay(status.channel, region)}
+                    {formatChannelDisplay(status.channel, region, channelMap)}
                   </Typography>
                 )}
 

@@ -6,13 +6,13 @@ import { streamUrl } from '../../utils/streamUrl';
 
 // Right-click menu on a program's Watch button. `contextMenu` is
 // { mouseX, mouseY, program }, or null while the menu is closed.
-export default function StreamContextMenu({ contextMenu, onClose, tunerStatus, region, selectedDevice }) {
+export default function StreamContextMenu({ contextMenu, onClose, tunerStatus, region, channelMap, selectedDevice }) {
   const copyStreamUrl = async () => {
     // Close first: the menu goes away at once, whether or not the copy works
     const program = contextMenu?.program;
     onClose();
 
-    const freq = streamFrequency(tunerStatus?.channel, region);
+    const freq = streamFrequency(tunerStatus?.channel, region, channelMap);
     if (!program || !freq) return;
     try {
       const response = await axios.get(streamUrl(selectedDevice, 'url', { ch: freq, program: program.programNum }));

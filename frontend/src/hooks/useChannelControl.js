@@ -37,12 +37,13 @@ export function useChannelControl({ selectedDevice, selectedTuner, region, chann
   // Leaving the page cancels any pending program fetch
   useEffect(() => () => programFetchGate.cancel(), []);
 
-  // The channel number the tuner's reported channel means in this region. A
-  // frequency-form channel is a different number per region, so the effect
-  // below also reruns when the region changes that number, but not otherwise
-  // (a region change must not overwrite what the user has typed for 'auto:27').
+  // The channel number the tuner's reported channel means in this region and
+  // channel map. A frequency-form channel is a different number per region and
+  // map, so the effect below also reruns when a change moves that number, but not
+  // otherwise (a region change must not overwrite what the user has typed for
+  // 'auto:27'). Null when the region and map cannot place the frequency.
   const reportedChannel = tunerStatus?.channel && tunerStatus.channel !== 'none'
-    ? channelFromStatus(tunerStatus.channel, region)
+    ? channelFromStatus(tunerStatus.channel, region, channelMap)
     : null;
 
   // Update directChannel input field when tuner status changes
@@ -52,8 +53,11 @@ export function useChannelControl({ selectedDevice, selectedTuner, region, chann
         // Tuner is cleared/stopped
         setDirectChannel('');
         setCurrentChannelPrograms([]);
-      } else if (reportedChannel) {
-        setDirectChannel(reportedChannel);
+      } else {
+        // An unplaceable frequency clears the field: leaving the previous number
+        // would show one from another region or map, and the up/down buttons
+        // would step from it.
+        setDirectChannel(reportedChannel ?? '');
       }
     }
   }, [tunerStatus?.channel, reportedChannel]);
