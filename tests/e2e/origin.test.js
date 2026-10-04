@@ -12,7 +12,7 @@ describe('origin checks', () => {
   after(() => server.stop());
 
   const api = (origin) => request(server.port, {
-    path: '/api/version',
+    path: '/api/v1/version',
     headers: origin === undefined ? {} : { Origin: origin }
   });
 
@@ -20,7 +20,7 @@ describe('origin checks', () => {
     test('a cross-origin request gets 403 and is not processed', async () => {
       const res = await request(server.port, {
         method: 'POST',
-        path: '/api/devices/10.0.0.5/tuner/0/channel',
+        path: '/api/v1/devices/10.0.0.5/tuner/0/channel',
         headers: { Origin: 'https://evil.example' },
         body: { channel: '27' }
       });
@@ -55,15 +55,15 @@ describe('origin checks', () => {
     });
 
     test('preflight is answered only for allowed origins', async () => {
-      const ok = await request(server.port, { method: 'OPTIONS', path: '/api/version', headers: { Origin: 'https://dash.example' } });
+      const ok = await request(server.port, { method: 'OPTIONS', path: '/api/v1/version', headers: { Origin: 'https://dash.example' } });
       assert.equal(ok.status, 204);
-      const bad = await request(server.port, { method: 'OPTIONS', path: '/api/version', headers: { Origin: 'https://evil.example' } });
+      const bad = await request(server.port, { method: 'OPTIONS', path: '/api/v1/version', headers: { Origin: 'https://evil.example' } });
       assert.equal(bad.status, 403);
     });
   });
 
   describe('event streams', () => {
-    const STREAM = '/api/devices/10.0.0.5/tuner/0/stream';
+    const STREAM = '/api/v1/devices/10.0.0.5/tuner/0/stream';
     const open = async (origin) => {
       const stream = await openStream(server.port, STREAM, { headers: origin === undefined ? {} : { Origin: origin } });
       stream.close();
@@ -88,7 +88,7 @@ describe('origin checks', () => {
     });
 
     test('a refused origin cannot start monitoring', async () => {
-      const stream = await openStream(server.port, '/api/devices/evilhost/tuner/0/stream', { headers: { Origin: 'https://evil.example' } });
+      const stream = await openStream(server.port, '/api/v1/devices/evilhost/tuner/0/stream', { headers: { Origin: 'https://evil.example' } });
       assert.equal(stream.status, 403);
       await sleep(1300);
       assert.ok(!server.calls().some((c) => c[0] === 'evilhost'));
@@ -100,12 +100,12 @@ describe('origin checks without an allowlist', () => {
   test('only the same origin is accepted', async (t) => {
     const server = await startServer();
     t.after(() => server.stop());
-    const get = (origin) => request(server.port, { path: '/api/version', headers: { Origin: origin } });
+    const get = (origin) => request(server.port, { path: '/api/v1/version', headers: { Origin: origin } });
     assert.equal((await get(`http://127.0.0.1:${server.port}`)).status, 200);
     assert.equal((await get('https://dash.example')).status, 403);
-    const refused = await openStream(server.port, '/api/devices/10.0.0.5/tuner/0/stream', { headers: { Origin: 'https://dash.example' } });
+    const refused = await openStream(server.port, '/api/v1/devices/10.0.0.5/tuner/0/stream', { headers: { Origin: 'https://dash.example' } });
     assert.equal(refused.status, 403);
-    const accepted = await openStream(server.port, '/api/devices/10.0.0.5/tuner/0/stream');
+    const accepted = await openStream(server.port, '/api/v1/devices/10.0.0.5/tuner/0/stream');
     accepted.close();
     assert.equal(accepted.status, 200);
   });

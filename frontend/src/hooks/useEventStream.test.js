@@ -4,15 +4,15 @@ const base = { selectedDevice: '1234ABCD', selectedTuner: 1, antennaMode: false,
 
 describe('streamUrl', () => {
   test('normal mode subscribes to the selected tuner', () => {
-    expect(streamUrl(base)).toBe('/api/devices/1234ABCD/tuner/1/stream');
+    expect(streamUrl(base)).toBe('/api/v1/devices/1234ABCD/tuner/1/stream');
   });
 
   test('normal mode starts without waiting for the device info', () => {
-    expect(streamUrl({ ...base, deviceInfo: null })).toBe('/api/devices/1234ABCD/tuner/1/stream');
+    expect(streamUrl({ ...base, deviceInfo: null })).toBe('/api/v1/devices/1234ABCD/tuner/1/stream');
   });
 
   test('antenna mode subscribes to every tuner of the device', () => {
-    expect(streamUrl({ ...base, antennaMode: true })).toBe('/api/devices/1234ABCD/antenna/stream?tuners=4');
+    expect(streamUrl({ ...base, antennaMode: true })).toBe('/api/v1/devices/1234ABCD/antenna/stream?tuners=4');
   });
 
   test('antenna mode waits for the device info', () => {
@@ -24,7 +24,7 @@ describe('streamUrl', () => {
   });
 
   test('the device is URL-encoded', () => {
-    expect(streamUrl({ ...base, selectedDevice: 'my tuner/1' })).toBe('/api/devices/my%20tuner%2F1/tuner/1/stream');
+    expect(streamUrl({ ...base, selectedDevice: 'my tuner/1' })).toBe('/api/v1/devices/my%20tuner%2F1/tuner/1/stream');
   });
 });
 
@@ -56,8 +56,8 @@ describe('subscribe', () => {
   });
 
   test('opens one EventSource on the url and closes it when stopped', () => {
-    const stop = subscribe('/api/devices/x/tuner/0/stream', { onTunerStatus: vi.fn(), onAntennaModeStatus: vi.fn() });
-    expect(FakeEventSource.instances.map((s) => s.url)).toEqual(['/api/devices/x/tuner/0/stream']);
+    const stop = subscribe('/api/v1/devices/x/tuner/0/stream', { onTunerStatus: vi.fn(), onAntennaModeStatus: vi.fn() });
+    expect(FakeEventSource.instances.map((s) => s.url)).toEqual(['/api/v1/devices/x/tuner/0/stream']);
     stop();
     expect(FakeEventSource.instances[0].closed).toBe(true);
   });

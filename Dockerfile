@@ -1,11 +1,17 @@
 # syntax=docker/dockerfile:1
 
-# Base image is pinned by digest (multi-arch index) for reproducible builds;
-# Dependabot keeps the tag and digest current.
+# The Rust server and its image. Bases are pinned by digest (multi-arch index) for
+# reproducible builds; Dependabot keeps the tags and digests current.
+#
+# RUST_IMAGE must be the Rust version in rust-toolchain.toml. The runtime image is
+# the same Debian release as the build image, so the binary's glibc is present.
 ARG NODE_IMAGE=node:24-slim@sha256:0e0ff40c39bc087845bfb27465a0df4ea419520094bc35842ff83dd8cbe6f9b6
+ARG RUST_IMAGE=rust:1.99.0-slim-trixie@sha256:01dd4f9c24801cfc8ba9cf8a5dd6dcca451cd17d1ae73574edc22591de6e6816
+ARG RUNTIME_IMAGE=debian:trixie-slim@sha256:a99cfc517144bc59b1978475ec53b46ecabec7e43635402ee5b77cc54cd1b20a
+ARG CARGO_CHEF_VERSION=0.1.77
 
-# Frontend build. Output is static files, so it always runs on the build
-# host's native platform (no emulation) regardless of the target architecture.
+# Frontend build. Output is static files, so it always runs on the build host's
+# native platform (no emulation) regardless of the target architecture.
 FROM --platform=$BUILDPLATFORM ${NODE_IMAGE} AS frontend-build
 WORKDIR /app/frontend
 COPY frontend/package.json frontend/package-lock.json ./
@@ -13,28 +19,48 @@ RUN --mount=type=cache,target=/root/.npm npm ci
 COPY frontend/ ./
 RUN npm run build
 
-# Runtime image
-FROM ${NODE_IMAGE} AS runtime
-
-# hdhomerun_config CLI only; no compilers, curl or -dev packages.
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends hdhomerun-config \
-    && rm -rf /var/lib/apt/lists/*
-
-ENV NODE_ENV=production
+# cargo-chef splits the build in two: the dependencies are compiled from a recipe
+# that only changes when Cargo.toml or Cargo.lock do, so editing the sources does
+# not recompile them.
+FROM ${RUST_IMAGE} AS chef
+ARG CARGO_CHEF_VERSION
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    cargo install cargo-chef --locked --version "${CARGO_CHEF_VERSION}"
 WORKDIR /app
 
-# Production dependencies only, reproducible via the lockfile. The package
-# managers are removed afterwards: they are not needed at runtime and only
-# add attack surface and scanner noise.
-COPY backend/package.json backend/package-lock.json ./
-RUN --mount=type=cache,target=/root/.npm npm ci --omit=dev \
-    && rm -rf /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/corepack \
-       /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/corepack \
-       /opt/yarn* /usr/local/bin/yarn /usr/local/bin/yarnpkg
+FROM chef AS planner
+COPY Cargo.toml Cargo.lock ./
+COPY crates ./crates
+RUN cargo chef prepare --recipe-path recipe.json
 
-COPY backend/ ./
+FROM chef AS builder
+COPY --from=planner /app/recipe.json recipe.json
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    cargo chef cook --release --locked --recipe-path recipe.json -p hdhr-server
+COPY Cargo.toml Cargo.lock ./
+COPY crates ./crates
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    cargo build --release --locked -p hdhr-server
+
+# Runtime image: the binary, the built frontend, the hdhomerun_config CLI it runs
+# and the CA certificates its cloud lookup needs. No compilers, curl or Node.
+FROM ${RUNTIME_IMAGE} AS runtime
+
+# The base image is rebuilt only now and then, so it can lag behind security fixes
+# Debian has already published (the image scan fails the build on a HIGH one). The
+# upgrade brings the runtime image up to date with them. That costs bit-for-bit
+# reproducibility of the base layers, which is the lesser evil here.
+# hadolint ignore=DL3005
+RUN apt-get update \
+    && apt-get -y --no-install-recommends upgrade \
+    && apt-get install -y --no-install-recommends ca-certificates hdhomerun-config \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+COPY --from=builder /app/target/release/hdhr-server /usr/local/bin/hdhr-server
 COPY --from=frontend-build /app/frontend/build ./public
+
+ENV HDHR_STATIC_DIR=/app/public
 
 # Application files stay root-owned and read-only to the runtime user.
 USER 1000:1000
@@ -42,6 +68,6 @@ USER 1000:1000
 EXPOSE 3000
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-    CMD ["node", "-e", "fetch('http://127.0.0.1:'+(process.env.PORT||3000)+'/api/version').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))"]
+    CMD ["hdhr-server", "--healthcheck"]
 
-CMD ["node", "server.js"]
+CMD ["hdhr-server"]

@@ -7,5 +7,5 @@ export function streamUrl(deviceId, endpoint, params) {
   const query = Object.entries(params)
     .map(([key, value]) => `${key}=${encodeURIComponent(value)}`)
     .join('&');
-  return `/api/devices/${encodeURIComponent(deviceId)}/stream/${endpoint}?${query}`;
+  return `/api/v1/devices/${encodeURIComponent(deviceId)}/stream/${endpoint}?${query}`;
 }

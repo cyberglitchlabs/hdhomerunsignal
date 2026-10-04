@@ -47,13 +47,14 @@ function makeFakeTool() {
   return { dir, log };
 }
 
-// The server under test: `node server.js` by default, or any other backend
-// implementing the same HTTP contract via SERVER_CMD (a command and optional
-// arguments separated by spaces, e.g. SERVER_CMD=target/debug/hdhr-server). It
-// must print "running on port <n>" once listening; that is how tests find it.
+// The server under test: the debug build of hdhr-server (cargo build -p
+// hdhr-server) by default, or any other binary implementing the same HTTP
+// contract via SERVER_CMD (a command and optional arguments separated by
+// spaces). It must print "running on port <n>" once listening; that is how tests
+// find it.
 function serverCommand() {
   const [cmd, ...args] = (process.env.SERVER_CMD || '').split(/\s+/).filter(Boolean);
-  return cmd ? [cmd, args] : [process.execPath, [path.join(__dirname, 'server.js')]];
+  return cmd ? [cmd, args] : [path.join(__dirname, '..', '..', 'target', 'debug', 'hdhr-server'), []];
 }
 
 // Unroutable: nothing under test may reach the real cloud lookup. startServer
@@ -155,14 +156,6 @@ async function startServer(env) {
   return server;
 }
 
-// The tests are written against the unversioned /api/... paths. A server that
-// serves the API somewhere else says where in SERVER_API_PREFIX (e.g. /api/v1),
-// and every /api/ path a test uses is rewritten to match.
-function apiPath(urlPath) {
-  const prefix = process.env.SERVER_API_PREFIX;
-  return prefix && urlPath.startsWith('/api/') ? prefix + urlPath.slice('/api'.length) : urlPath;
-}
-
 // Minimal HTTP client: unlike fetch it lets a test set Origin and Host freely.
 function request(port, { method = 'GET', path: urlPath = '/', headers = {}, body } = {}) {
   return new Promise((resolve, reject) => {
@@ -172,7 +165,7 @@ function request(port, { method = 'GET', path: urlPath = '/', headers = {}, body
       host: '127.0.0.1',
       port,
       method,
-      path: apiPath(urlPath),
+      path: urlPath,
       agent: false,
       headers: {
         ...(payload !== undefined && { 'Content-Type': 'application/json' }),
@@ -199,7 +192,7 @@ function openStream(port, urlPath, { headers = {} } = {}) {
     const comments = [];
     let buffer = '';
     const req = http.request({
-      host: '127.0.0.1', port, method: 'GET', path: apiPath(urlPath), agent: false,
+      host: '127.0.0.1', port, method: 'GET', path: urlPath, agent: false,
       headers: { Accept: 'text/event-stream', ...headers }
     }, (res) => {
       const closed = new Promise((done) => { res.on('close', done); });

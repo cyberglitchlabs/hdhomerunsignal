@@ -137,7 +137,7 @@ Tagged releases also publish the chart as an OCI artifact:
 
 **Behind an ingress or reverse proxy.** Set `trustProxy` (the `HDHR_TRUST_PROXY` variable) so per-client rate limiting sees each user's real address; `--set trustProxy=1` is right for a single ingress controller directly in front of the pod. Without it every client shares the proxy's address and therefore one rate-limit bucket. Set it to the number of proxies you actually run, or their addresses, and no more: trusting a proxy hop that is not there lets any client spoof its address with an `X-Forwarded-For` header. (Tested with one hop; if a load balancer sits in front of your ingress controller, count both.)
 
-Real-time updates are long-lived Server-Sent Events responses, so the proxy must not buffer or time out `/api/devices/:id/.../stream`. The server sends `X-Accel-Buffering: no` and a keepalive comment every 15 seconds; with nginx-ingress, raise `proxy-read-timeout` above that if you have lowered it.
+Real-time updates are long-lived Server-Sent Events responses, so the proxy must not buffer or time out `/api/v1/devices/:id/.../stream`. The server sends `X-Accel-Buffering: no` and a keepalive comment every 15 seconds; with nginx-ingress, raise `proxy-read-timeout` above that if you have lowered it.
 
 The proxy must also **preserve the original `Host` header** (nginx-ingress does by default). The API (including the event streams) rejects browser requests whose `Origin` does not match the `Host` they arrive with, and `X-Forwarded-Host` is not consulted. If your proxy rewrites `Host`, list the public origin in `allowedOrigins` (`HDHR_ALLOWED_ORIGINS`) instead.
 
@@ -259,40 +259,46 @@ Select your region (United States, Canada, United Kingdom/EU or Australia) to co
 
 ### Architecture
 - **Frontend**: React with Material-UI
-- **Backend**: Node.js with Express
+- **Backend**: Rust (axum), in `crates/`
 - **Communication**: REST API + Server-Sent Events for real-time updates
 - **HDHomeRun Integration**: Uses `hdhomerun_config` command-line tool
 
 ### Container
-- Multi-stage build on a digest-pinned Node.js base image; production dependencies only
+- Multi-stage build on digest-pinned base images: the Rust server and the built frontend in a Debian slim runtime image, `linux/amd64` and `linux/arm64`
 - Runs as a non-root user, and works with a read-only root filesystem and all capabilities dropped
 - `hdhomerun_config` is installed from the distribution's package repository
 - Built-in healthcheck and clean shutdown on `SIGTERM`
 - Host networking is only needed for broadcast discovery; otherwise list tuners in `HDHOMERUN_DEVICES`
 
 ### API Endpoints
-- `GET /api/devices` - Discover HDHomeRun devices
-- `GET /api/devices/:id/info` - Get device information
-- `GET /api/devices/:id/tuner/:tuner/status` - Get tuner status
-- `GET /api/devices/:id/tuner/:tuner/programs` - Get programs on current channel
-- `GET /api/devices/:id/tuner/:tuner/plpinfo` - Get ATSC 3.0 PLP information
-- `GET /api/devices/:id/tuner/:tuner/l1info` - Get ATSC 3.0 L1 information
-- `POST /api/devices/:id/tuner/:tuner/channel` - Set channel
-- `POST /api/devices/:id/tuner/:tuner/clear` - Clear/stop tuner
-- `GET /api/devices/:id/stream/play.m3u?ch=&program=&name=` - Download M3U playlist for a program
-- `GET /api/devices/:id/stream/url?ch=&program=` - Get raw stream URL for a program
-- `GET /api/devices/:id/tuner/:tuner/stream` - Server-Sent Events: one `tuner-status` event per second (status, current program, ATSC 3.0 PLP and L1 info) until the client disconnects
-- `GET /api/devices/:id/antenna/stream?tuners=N` - Server-Sent Events: one `antenna-mode-status` event per second with the status of tuners `0` to `N-1` (`N` is 1 to 8)
+The API lives under `/api/v1`. The OpenAPI 3.1 description is served at `GET /api/v1/openapi.json` and is committed as [`api/openapi.json`](api/openapi.json). Set `HDHR_ENABLE_DOCS=true` to also serve an interactive reference at `/api/v1/docs`.
+
+- `GET /api/v1/version` - Server version
+- `GET /api/v1/devices` - Discover HDHomeRun devices
+- `GET /api/v1/devices/:id/info` - Get device information
+- `GET /api/v1/devices/:id/tuner/:tuner/status` - Get tuner status
+- `GET /api/v1/devices/:id/tuner/:tuner/programs` - Get programs on current channel
+- `GET /api/v1/devices/:id/tuner/:tuner/plpinfo` - Get ATSC 3.0 PLP information
+- `GET /api/v1/devices/:id/tuner/:tuner/l1info` - Get ATSC 3.0 L1 information
+- `POST /api/v1/devices/:id/tuner/:tuner/channel` - Set channel
+- `POST /api/v1/devices/:id/tuner/:tuner/clear` - Clear/stop tuner
+- `GET /api/v1/devices/:id/stream/play.m3u?ch=&program=&name=` - Download M3U playlist for a program
+- `GET /api/v1/devices/:id/stream/url?ch=&program=` - Get raw stream URL for a program
+- `GET /api/v1/devices/:id/tuner/:tuner/stream` - Server-Sent Events: one `tuner-status` event per second (status, current program, ATSC 3.0 PLP and L1 info) until the client disconnects
+- `GET /api/v1/devices/:id/antenna/stream?tuners=N` - Server-Sent Events: one `antenna-mode-status` event per second with the status of tuners `0` to `N-1` (`N` is 1 to 8)
+
+The list above is a summary; the OpenAPI document is the complete and authoritative description.
 
 ## Development
 
 To run in development mode:
 
-1. **Backend** (in `/backend` directory):
+1. **Backend** (from the repository root; the toolchain in `rust-toolchain.toml` is installed by rustup):
    ```bash
-   npm ci
-   npm run dev
+   cargo run -p hdhr-server
    ```
+   It runs the `hdhomerun_config` tool, so that needs to be on `PATH`. Set
+   `HDHR_STATIC_DIR` to a built frontend if you want the server to serve one.
 
 2. **Frontend** (in `/frontend` directory):
    ```bash
@@ -304,19 +310,23 @@ To run in development mode:
    to the backend on `http://localhost:3000`. Set
    `BACKEND_URL` to point it somewhere else.
 
-Run the tests with `npm test` in `/backend` and in `/frontend` (the frontend
-uses Vitest; `npm run test:watch` re-runs on change). `npm run build` in
-`/frontend` writes the production bundle to `frontend/build`.
+Run the backend tests with `cargo test --workspace`, and the frontend tests with
+`npm test` in `/frontend` (the frontend uses Vitest; `npm run test:watch`
+re-runs on change). `npm run build` in `/frontend` writes the production bundle
+to `frontend/build`.
 
-The backend tests are black-box: they spawn the server as a child process with a
-fake `hdhomerun_config` on `PATH`. Set `SERVER_CMD` to run them against a
-different implementation of the same HTTP contract, for example
-`SERVER_CMD=/path/to/hdhr-server SERVER_API_PREFIX=/api/v1 npm test`. The
-command must print `running on port <n>` once it is listening, and
-`SERVER_API_PREFIX` says where it serves the API: the tests are written against
-`/api/...` and every such path is rewritten to use it.
+The end-to-end tests in `tests/e2e` are black-box: they spawn the server as a
+child process with a fake `hdhomerun_config` on `PATH` and talk to it over HTTP.
+Build the server first (`cargo build -p hdhr-server`), then run `npm test` in
+`tests/e2e`. Set `SERVER_CMD` to run them against a different binary that
+implements the same HTTP contract; the command must print `running on port <n>`
+once it is listening.
 
-Pull requests are checked by CI: unit tests, `npm audit`, Dockerfile and workflow linting, secret scanning, dependency review, CodeQL, a Trivy scan of the built image, Helm chart validation, and a smoke test of the image under a read-only filesystem with all capabilities dropped. Pushes to `main` build, scan, publish and sign the image.
+If you change the API, regenerate the committed description with
+`UPDATE_OPENAPI=1 cargo test -p hdhr-server --test openapi`. A test fails when
+`api/openapi.json` is out of date.
+
+Pull requests are checked by CI: Rust format, clippy and tests, `cargo-deny`, end-to-end tests, frontend tests, `npm audit`, Dockerfile and workflow linting, secret scanning, dependency review, CodeQL, a Trivy scan of the built image, Helm chart validation, and a smoke test of the image under a read-only filesystem with all capabilities dropped. Pushes to `main` build, scan, publish and sign the image.
 
 ### Releases
 

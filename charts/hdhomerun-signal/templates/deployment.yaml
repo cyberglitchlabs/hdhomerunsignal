@@ -73,14 +73,14 @@ spec:
             {{- end }}
           livenessProbe:
             httpGet:
-              path: /api/version
+              path: /api/v1/version
               port: http
             initialDelaySeconds: 10
             periodSeconds: 30
             timeoutSeconds: 5
           readinessProbe:
             httpGet:
-              path: /api/version
+              path: /api/v1/version
               port: http
             periodSeconds: 10
             timeoutSeconds: 5

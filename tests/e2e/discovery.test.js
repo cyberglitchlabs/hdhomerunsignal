@@ -10,7 +10,7 @@ const CLOUD_URL = '/discover';
 async function refresh(env) {
   const server = await startServer({ HDHOMERUN_DISABLE_DISCOVERY: '', ...env });
   try {
-    const res = await request(server.port, { path: '/api/devices?force=true' });
+    const res = await request(server.port, { path: '/api/v1/devices?force=true' });
     assert.equal(res.status, 200);
     return {
       devices: JSON.parse(res.body),

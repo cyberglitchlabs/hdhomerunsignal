@@ -16,19 +16,19 @@ describe('API: injection attempts never reach hdhomerun_config', () => {
   const badChannels = ['27;id', '$(id)', '-h', '--help', 'auto:27 x', '27\nset', 'a'.repeat(50), '', 'atsc3:27:0+1+', 27, { a: 1 }, ['27'], null];
 
   const deviceRoutes = [
-    ['GET', (d) => `/api/devices/${enc(d)}/info`],
-    ['GET', (d) => `/api/devices/${enc(d)}/scan/0`],
-    ['GET', (d) => `/api/devices/${enc(d)}/tuner/0/status`],
-    ['GET', (d) => `/api/devices/${enc(d)}/tuner/0/programs`],
-    ['POST', (d) => `/api/devices/${enc(d)}/tuner/0/channel`, { channel: '27' }],
-    ['POST', (d) => `/api/devices/${enc(d)}/tuner/0/channel/up`],
-    ['POST', (d) => `/api/devices/${enc(d)}/tuner/0/channel/down`],
-    ['POST', (d) => `/api/devices/${enc(d)}/tuner/0/clear`],
-    ['GET', (d) => `/api/devices/${enc(d)}/tuner/0/plpinfo`],
-    ['GET', (d) => `/api/devices/${enc(d)}/tuner/0/l1info`],
-    ['POST', (d) => `/api/devices/${enc(d)}/tuner/0/atsc3`, { channel: '27' }],
-    ['GET', (d) => `/api/devices/${enc(d)}/stream/url?ch=27&program=1`],
-    ['GET', (d) => `/api/devices/${enc(d)}/stream/play.m3u?ch=27&program=1`]
+    ['GET', (d) => `/api/v1/devices/${enc(d)}/info`],
+    ['GET', (d) => `/api/v1/devices/${enc(d)}/scan/0`],
+    ['GET', (d) => `/api/v1/devices/${enc(d)}/tuner/0/status`],
+    ['GET', (d) => `/api/v1/devices/${enc(d)}/tuner/0/programs`],
+    ['POST', (d) => `/api/v1/devices/${enc(d)}/tuner/0/channel`, { channel: '27' }],
+    ['POST', (d) => `/api/v1/devices/${enc(d)}/tuner/0/channel/up`],
+    ['POST', (d) => `/api/v1/devices/${enc(d)}/tuner/0/channel/down`],
+    ['POST', (d) => `/api/v1/devices/${enc(d)}/tuner/0/clear`],
+    ['GET', (d) => `/api/v1/devices/${enc(d)}/tuner/0/plpinfo`],
+    ['GET', (d) => `/api/v1/devices/${enc(d)}/tuner/0/l1info`],
+    ['POST', (d) => `/api/v1/devices/${enc(d)}/tuner/0/atsc3`, { channel: '27' }],
+    ['GET', (d) => `/api/v1/devices/${enc(d)}/stream/url?ch=27&program=1`],
+    ['GET', (d) => `/api/v1/devices/${enc(d)}/stream/play.m3u?ch=27&program=1`]
   ];
 
   test('device id', async () => {
@@ -51,7 +51,7 @@ describe('API: injection attempts never reach hdhomerun_config', () => {
     ];
     for (const tuner of badTuners) {
       for (const [method, tail, body] of tunerRoutes) {
-        const url = `/api/devices/${DEV}/${tail.replace('{t}', enc(tuner))}`;
+        const url = `/api/v1/devices/${DEV}/${tail.replace('{t}', enc(tuner))}`;
         const res = await request(server.port, { method, path: url, body });
         assert.equal(res.status, 400, `${method} ${url} -> ${res.status}`);
       }
@@ -61,11 +61,11 @@ describe('API: injection attempts never reach hdhomerun_config', () => {
 
   test('channelMap', async () => {
     for (const map of ['us-bcast;id', '--help', '$(id)', 'xx', 'US-BCAST', '', 'us-bcast us-cable']) {
-      const res = await request(server.port, { path: `/api/devices/${DEV}/scan/0?channelMap=${enc(map)}` });
+      const res = await request(server.port, { path: `/api/v1/devices/${DEV}/scan/0?channelMap=${enc(map)}` });
       assert.equal(res.status, 400, `channelMap=${JSON.stringify(map)} -> ${res.status}`);
     }
     // Repeated parameters arrive as an array, which is not a channel map either.
-    const dup = await request(server.port, { path: `/api/devices/${DEV}/scan/0?channelMap=us-bcast&channelMap=us-cable` });
+    const dup = await request(server.port, { path: `/api/v1/devices/${DEV}/scan/0?channelMap=us-bcast&channelMap=us-cable` });
     assert.equal(dup.status, 400);
     assert.deepEqual(server.calls(), []);
   });
@@ -73,11 +73,11 @@ describe('API: injection attempts never reach hdhomerun_config', () => {
   test('channel body', async () => {
     for (const channel of badChannels) {
       const res = await request(server.port, {
-        method: 'POST', path: `/api/devices/${DEV}/tuner/0/channel`, body: { channel }
+        method: 'POST', path: `/api/v1/devices/${DEV}/tuner/0/channel`, body: { channel }
       });
       assert.equal(res.status, 400, `channel=${JSON.stringify(channel)} -> ${res.status}`);
     }
-    const noBody = await request(server.port, { method: 'POST', path: `/api/devices/${DEV}/tuner/0/channel`, body: '{}' });
+    const noBody = await request(server.port, { method: 'POST', path: `/api/v1/devices/${DEV}/tuner/0/channel`, body: '{}' });
     assert.equal(noBody.status, 400);
     assert.deepEqual(server.calls(), []);
   });
@@ -87,7 +87,7 @@ describe('API: injection attempts never reach hdhomerun_config', () => {
       { channel: '27;id' }, { channel: '27', plps: 'x' }, { channel: '27', plps: ['1;2'] },
       { channel: '27', plps: [256] }, { channel: '27', plps: [-1] }, { channel: '27', plps: new Array(65).fill(1) }, {}
     ]) {
-      const res = await request(server.port, { method: 'POST', path: `/api/devices/${DEV}/tuner/0/atsc3`, body });
+      const res = await request(server.port, { method: 'POST', path: `/api/v1/devices/${DEV}/tuner/0/atsc3`, body });
       assert.equal(res.status, 400, JSON.stringify(body));
     }
     assert.deepEqual(server.calls(), []);
@@ -95,7 +95,7 @@ describe('API: injection attempts never reach hdhomerun_config', () => {
 
   test('oversized JSON body is rejected', async () => {
     const res = await request(server.port, {
-      method: 'POST', path: `/api/devices/${DEV}/tuner/0/channel`, body: { channel: '27', pad: 'x'.repeat(20000) }
+      method: 'POST', path: `/api/v1/devices/${DEV}/tuner/0/channel`, body: { channel: '27', pad: 'x'.repeat(20000) }
     });
     assert.equal(res.status, 413);
     assert.deepEqual(server.calls(), []);
@@ -104,19 +104,19 @@ describe('API: injection attempts never reach hdhomerun_config', () => {
   test('event stream subscriptions with bad parameters', async () => {
     const enc = encodeURIComponent;
     const bad = [
-      `/api/devices/-h/tuner/0/stream`,
-      `/api/devices/${enc('a;id')}/tuner/0/stream`,
-      `/api/devices/${enc('$(id)')}/tuner/0/stream`,
-      `/api/devices/badtuner1/tuner/8/stream`,
-      `/api/devices/badtuner2/tuner/${enc('1;2')}/stream`,
-      `/api/devices/badtuner3/tuner/-1/stream`,
-      `/api/devices/-h/antenna/stream?tuners=2`,
-      `/api/devices/${enc('a;id')}/antenna/stream?tuners=2`,
-      `/api/devices/count0/antenna/stream?tuners=0`,
-      `/api/devices/count9/antenna/stream?tuners=9`,
-      `/api/devices/countfrac/antenna/stream?tuners=1.5`,
-      `/api/devices/countnan/antenna/stream?tuners=x`,
-      `/api/devices/countnone/antenna/stream`
+      `/api/v1/devices/-h/tuner/0/stream`,
+      `/api/v1/devices/${enc('a;id')}/tuner/0/stream`,
+      `/api/v1/devices/${enc('$(id)')}/tuner/0/stream`,
+      `/api/v1/devices/badtuner1/tuner/8/stream`,
+      `/api/v1/devices/badtuner2/tuner/${enc('1;2')}/stream`,
+      `/api/v1/devices/badtuner3/tuner/-1/stream`,
+      `/api/v1/devices/-h/antenna/stream?tuners=2`,
+      `/api/v1/devices/${enc('a;id')}/antenna/stream?tuners=2`,
+      `/api/v1/devices/count0/antenna/stream?tuners=0`,
+      `/api/v1/devices/count9/antenna/stream?tuners=9`,
+      `/api/v1/devices/countfrac/antenna/stream?tuners=1.5`,
+      `/api/v1/devices/countnan/antenna/stream?tuners=x`,
+      `/api/v1/devices/countnone/antenna/stream`
     ];
     for (const path of bad) {
       const stream = await openStream(server.port, path);
@@ -125,7 +125,7 @@ describe('API: injection attempts never reach hdhomerun_config', () => {
     }
     // A valid subscription last. Once its tool calls show up, the earlier
     // tick(s) of any wrongly accepted subscription have had time to run as well.
-    const good = await openStream(server.port, '/api/devices/good1/tuner/2/stream');
+    const good = await openStream(server.port, '/api/v1/devices/good1/tuner/2/stream');
     assert.equal(good.status, 200);
     await waitFor(() => server.calls().some((c) => c[0] === 'good1'), { timeout: 5000 });
     await sleep(300);
@@ -149,16 +149,16 @@ describe('API: legitimate requests reach the tool with exact arguments', () => {
   test('set channel (including ATSC 3.0 and special values)', async () => {
     for (const channel of ['27', 'auto:27', '8vsb:27', 'qam256:117', 'auto:575000000', 'atsc3:27:0+1+2', 'none', '+', '-']) {
       server.clearCalls();
-      const res = await post(`/api/devices/${DEV}/tuner/2/channel`, { channel });
+      const res = await post(`/api/v1/devices/${DEV}/tuner/2/channel`, { channel });
       assert.equal(res.status, 200, channel);
       assert.deepEqual(server.calls(), [[DEV, 'set', '/tuner2/channel', channel]]);
     }
   });
 
   test('channel up, down and clear', async () => {
-    await post(`/api/devices/1080ABCD/tuner/1/channel/up`);
-    await post(`/api/devices/1080ABCD/tuner/1/channel/down`);
-    await post(`/api/devices/1080ABCD/tuner/1/clear`);
+    await post(`/api/v1/devices/1080ABCD/tuner/1/channel/up`);
+    await post(`/api/v1/devices/1080ABCD/tuner/1/channel/down`);
+    await post(`/api/v1/devices/1080ABCD/tuner/1/clear`);
     assert.deepEqual(server.calls(), [
       ['1080ABCD', 'set', '/tuner1/channel', '+'],
       ['1080ABCD', 'set', '/tuner1/channel', '-'],
@@ -167,28 +167,28 @@ describe('API: legitimate requests reach the tool with exact arguments', () => {
   });
 
   test('atsc3 builds the channel string from validated parts', async () => {
-    const res = await post(`/api/devices/${DEV}/tuner/0/atsc3`, { channel: '27', plps: [0, '1', 2] });
+    const res = await post(`/api/v1/devices/${DEV}/tuner/0/atsc3`, { channel: '27', plps: [0, '1', 2] });
     assert.equal(res.status, 200);
     assert.deepEqual(server.calls(), [[DEV, 'set', '/tuner0/channel', 'atsc3:27:0+1+2']]);
 
     server.clearCalls();
-    await post(`/api/devices/${DEV}/tuner/0/atsc3`, { channel: '27' });
+    await post(`/api/v1/devices/${DEV}/tuner/0/atsc3`, { channel: '27' });
     assert.deepEqual(server.calls(), [[DEV, 'set', '/tuner0/channel', 'atsc3:27']]);
   });
 
   test('scan', async () => {
-    let res = await request(server.port, { path: `/api/devices/${DEV}/scan/1` });
+    let res = await request(server.port, { path: `/api/v1/devices/${DEV}/scan/1` });
     assert.equal(res.status, 200);
     assert.deepEqual(server.calls(), [[DEV, 'scan', '/tuner1', 'us-bcast']]);
 
     server.clearCalls();
-    res = await request(server.port, { path: `/api/devices/${DEV}/scan/3?channelMap=eu-cable` });
+    res = await request(server.port, { path: `/api/v1/devices/${DEV}/scan/3?channelMap=eu-cable` });
     assert.equal(res.status, 200);
     assert.deepEqual(server.calls(), [[DEV, 'scan', '/tuner3', 'eu-cable']]);
   });
 
   test('tuner status', async () => {
-    const res = await request(server.port, { path: `/api/devices/${DEV}/tuner/0/status` });
+    const res = await request(server.port, { path: `/api/v1/devices/${DEV}/tuner/0/status` });
     assert.equal(res.status, 200);
     assert.equal(JSON.parse(res.body).channel, '8vsb:27');
     assert.deepEqual(server.calls().map((c) => c.slice(0, 3)).sort(), [
@@ -198,7 +198,7 @@ describe('API: legitimate requests reach the tool with exact arguments', () => {
   });
 
   test('device info', async () => {
-    const res = await request(server.port, { path: `/api/devices/example-host.local/info` });
+    const res = await request(server.port, { path: `/api/v1/devices/example-host.local/info` });
     assert.equal(res.status, 200);
     const calls = server.calls();
     assert.deepEqual(calls[0], ['example-host.local', 'get', '/sys/model']);
@@ -211,14 +211,14 @@ describe('API: M3U playlist', () => {
   before(async () => {
     server = await startServer({ HDHOMERUN_DEVICES: DEV });
     // Load the configured device into the controller.
-    const res = await request(server.port, { path: '/api/devices' });
+    const res = await request(server.port, { path: '/api/v1/devices' });
     assert.equal(res.status, 200);
     assert.equal(JSON.parse(res.body)[0].id, DEV);
   });
   after(() => server.stop());
 
   test('a plain request produces the expected playlist', async () => {
-    const res = await request(server.port, { path: '/api/devices/10.0.0.5/stream/play.m3u?ch=27&program=3&name=KQED' });
+    const res = await request(server.port, { path: '/api/v1/devices/10.0.0.5/stream/play.m3u?ch=27&program=3&name=KQED' });
     assert.equal(res.status, 200);
     assert.match(res.headers['content-type'], /^audio\/x-mpegurl\b/);
     assert.equal(res.headers['content-disposition'], 'attachment; filename="KQED.m3u"');
@@ -228,7 +228,7 @@ describe('API: M3U playlist', () => {
   test('a newline in name cannot add playlist lines', async () => {
     const evil = 'x\r\n#EXTINF:-1,evil\r\nhttp://evil.example/stream\n';
     const res = await request(server.port, {
-      path: `/api/devices/${DEV}/stream/play.m3u?ch=27&program=3&name=${enc(evil)}`
+      path: `/api/v1/devices/${DEV}/stream/play.m3u?ch=27&program=3&name=${enc(evil)}`
     });
     assert.equal(res.status, 200);
     const lines = res.body.split('\n').filter(Boolean);
@@ -242,10 +242,10 @@ describe('API: M3U playlist', () => {
 
   test('non-numeric ch or program is rejected; unknown device is 404', async () => {
     for (const query of ['ch=27;id&program=1', 'ch=27&program=a', 'ch=27', 'program=1']) {
-      const res = await request(server.port, { path: `/api/devices/${DEV}/stream/play.m3u?${query}` });
+      const res = await request(server.port, { path: `/api/v1/devices/${DEV}/stream/play.m3u?${query}` });
       assert.equal(res.status, 400, query);
     }
-    const res = await request(server.port, { path: '/api/devices/10.9.9.9/stream/play.m3u?ch=27&program=1' });
+    const res = await request(server.port, { path: '/api/v1/devices/10.9.9.9/stream/play.m3u?ch=27&program=1' });
     assert.equal(res.status, 404);
   });
 });

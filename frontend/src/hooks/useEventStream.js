@@ -11,9 +11,9 @@ export function streamUrl({ selectedDevice, selectedTuner, antennaMode, deviceIn
   const device = encodeURIComponent(selectedDevice);
   if (antennaMode) {
     if (!deviceInfo) return null;
-    return `/api/devices/${device}/antenna/stream?tuners=${deviceInfo.tuners}`;
+    return `/api/v1/devices/${device}/antenna/stream?tuners=${deviceInfo.tuners}`;
   }
-  return `/api/devices/${device}/tuner/${selectedTuner}/stream`;
+  return `/api/v1/devices/${device}/tuner/${selectedTuner}/stream`;
 }
 
 /**
