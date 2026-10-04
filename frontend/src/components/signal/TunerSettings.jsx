@@ -1,9 +1,18 @@
-import { Box, FormControl, InputLabel, MenuItem, Select } from '@mui/material';
+import { Box, FormControl, FormHelperText, InputLabel, MenuItem, Select } from '@mui/material';
 import PanelCard from './PanelCard';
 import { CHANNEL_MAPS } from '../../utils/channels';
 
-// Channel map for the region, and which of the device's tuners to look at.
-export default function TunerSettings({ region, channelMap, onChannelMapChange, deviceInfo, selectedTuner, onTunerChange }) {
+// The channel map in use, and which of the device's tuners to look at. When the
+// device reports the map it is set to, that is the one in use and it cannot be
+// changed here: the device decides what a channel number means.
+export default function TunerSettings({
+  region, channelMap, deviceChannelMap, onChannelMapChange, deviceInfo, selectedTuner, onTunerChange
+}) {
+  const maps = CHANNEL_MAPS[region];
+  // The device's map can be one the region's list does not have
+  const options = maps.some((map) => map.value === channelMap)
+    ? maps
+    : [...maps, { value: channelMap, label: channelMap }];
   return (
     <PanelCard>
       <Box sx={{ display: 'flex', gap: 1, alignItems: 'center', flexWrap: 'wrap' }}>
@@ -12,14 +21,16 @@ export default function TunerSettings({ region, channelMap, onChannelMapChange, 
           <Select
             value={channelMap}
             label="Channel Map"
+            disabled={Boolean(deviceChannelMap)}
             onChange={(e) => onChannelMapChange(e.target.value)}
           >
-            {CHANNEL_MAPS[region].map((map) => (
+            {options.map((map) => (
               <MenuItem key={map.value} value={map.value}>
                 {map.label}
               </MenuItem>
             ))}
           </Select>
+          {deviceChannelMap && <FormHelperText>Set on the device</FormHelperText>}
         </FormControl>
 
         {deviceInfo && (

@@ -172,6 +172,20 @@ impl Hdhr {
         }
     }
 
+    /// Each tuner's channel map as the device has it set, by tuner index. A tuner
+    /// that does not answer, or has a map this app does not know, is `None`.
+    /// Read-only: it never changes the device.
+    pub async fn channel_maps(&self, host: &str, tuners: u8) -> Vec<Option<String>> {
+        join_all(
+            (0..tuners.min(validate::MAX_TUNER + 1)).map(|tuner| async move {
+                let variable = tuner_variable(tuner, "channelmap").ok()?;
+                let map = self.backend.get(host, &variable).await.ok()?;
+                validate::channel_map(map.trim()).map(str::to_owned)
+            }),
+        )
+        .await
+    }
+
     // -------------------------------------------------------------- tuner
 
     /// One status reading, with the dB estimates when the debug counters are

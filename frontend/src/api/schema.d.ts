@@ -44,6 +44,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/devices/{id}/channelmaps": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Each tuner's channel map
+         * @description The channel map each tuner is set to on the device, which decides what a channel number such as `27` means when tuning. Read-only. Null for a tuner that does not answer or has a map this app does not know.
+         */
+        get: operations["channel_maps"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/devices/{id}/info": {
         parameters: {
             query?: never;
@@ -609,6 +629,41 @@ export interface operations {
             };
             /** @description This client already holds the most streams it may. */
             429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    channel_maps: {
+        parameters: {
+            query: {
+                /** @description How many tuners to read, 1 to 8 (plain digits). */
+                tuners: number;
+            };
+            header?: never;
+            path: {
+                /** @description A device ID (e.g. `1080ABCD`), IPv4 address or hostname: letters, digits, dots and hyphens, starting with a letter or digit, at most 253 characters. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description One entry per tuner, in order. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": (string | null)[];
+                };
+            };
+            /** @description A device or `tuners` is not valid. */
+            400: {
                 headers: {
                     [name: string]: unknown;
                 };

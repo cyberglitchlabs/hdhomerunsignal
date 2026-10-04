@@ -236,6 +236,13 @@ export function channelToFrequency(channel, region = 'us', channelMap = '') {
   return null;
 }
 
+// The channel map to read channels with: the tuner's own map when the device
+// reported one (it is what the device uses to interpret channel numbers),
+// otherwise the one selected in the page.
+export function effectiveChannelMap(deviceMaps, tuner, selectedMap) {
+  return deviceMaps?.[tuner] ?? selectedMap;
+}
+
 // Valid channel numbers for the CH field and the up/down buttons. Cable maps
 // use wider numbering than broadcast (values from libhdhomerun's channel tables):
 // US/CA cable, HRC and IRC run 2-158, and EU/AU cable uses the frequency in MHz
@@ -249,7 +256,8 @@ export function getChannelRange(region, channelMap = '') {
 }
 
 // The value the CH field should show for a tuner's reported channel, or null
-// when it should be left alone. 'none' (tuner stopped) is handled by the caller.
+// when the region and map cannot place it (the caller clears the field). 'none'
+// (tuner stopped) is handled by the caller.
 // Formats: "auto6t:605028615" (frequency in Hz), "auto:4" and "13".
 export function channelFromStatus(statusChannel, region, channelMap = '') {
   const freqMatch = statusChannel.match(/:(\d{8,})/);

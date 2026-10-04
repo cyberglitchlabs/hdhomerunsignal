@@ -21,7 +21,7 @@ use tokio_stream::wrappers::WatchStream;
 
 use crate::error::ApiError;
 use crate::hub::{Key, Subscription};
-use crate::routes::{ApiResult, Query, client_key, device, tuner};
+use crate::routes::{ApiResult, client_key, device, tuner, tuner_count};
 use crate::schema::{AntennaReading, ErrorBody, TunerEvent};
 use crate::state::{AppState, StreamSlot};
 
@@ -101,14 +101,7 @@ pub async fn antenna_stream(
     headers: HeaderMap,
 ) -> ApiResult<Response> {
     let device = device(&id)?.to_owned();
-    // 1 to 8 tuners, as a plain decimal number.
-    let tuners = Query::new(query)
-        .get("tuners")
-        .map(str::trim)
-        .filter(|text| !text.is_empty() && text.bytes().all(|b| b.is_ascii_digit()))
-        .and_then(|text| text.parse::<u8>().ok())
-        .filter(|count| (1..=8).contains(count))
-        .ok_or_else(|| ApiError::bad_request("Invalid tuners"))?;
+    let tuners = tuner_count(query)?;
     open(
         &state,
         extensions.get::<ConnectInfo<SocketAddr>>(),

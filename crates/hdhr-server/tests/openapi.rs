@@ -111,13 +111,14 @@ fn the_spec_describes_the_whole_api() {
         .keys()
         .map(String::as_str)
         .collect();
-    assert_eq!(paths.len(), 17);
+    assert_eq!(paths.len(), 18);
     assert!(
         paths.iter().all(|path| path.starts_with("/api/v1/")),
         "{paths:?}"
     );
     for expected in [
         "/api/v1/devices",
+        "/api/v1/devices/{id}/channelmaps",
         "/api/v1/devices/{id}/tuner/{tuner}/stream",
         "/api/v1/devices/{id}/antenna/stream",
         "/api/v1/devices/{id}/scan/{tuner}",

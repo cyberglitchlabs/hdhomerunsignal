@@ -12,7 +12,7 @@ import {
 } from '@mui/material';
 import { PlayArrow as PlayIcon } from '@mui/icons-material';
 import PanelCard from './PanelCard';
-import { streamFrequency } from '../../utils/channels';
+import { formatChannelDisplay, streamFrequency } from '../../utils/channels';
 import { streamUrl } from '../../utils/streamUrl';
 
 // The programs on the tuned channel. Watch opens the stream in the user's
@@ -32,7 +32,7 @@ export default function ProgramTable({ programs, tunerStatus, region, channelMap
   return (
     <PanelCard>
       <Typography variant="body1" sx={{ fontSize: '0.9rem', mb: 1, fontWeight: 500 }}>
-        Programs on Channel {tunerStatus?.channel?.split(':')[0] || 'Unknown'}
+        Programs on {formatChannelDisplay(tunerStatus?.channel, region, channelMap)}
       </Typography>
       <TableContainer component={Paper} sx={{ backgroundColor: 'transparent', boxShadow: 'none' }}>
         <Table size="small" sx={{ '& .MuiTableCell-root': { py: 0.5, fontSize: '0.8rem' } }}>
