@@ -70,8 +70,9 @@ export function useDevices() {
       const chosen = chooseDevice(response.data, selectedRef.current);
       if (chosen) {
         await selectDevice(chosen.id);
-      } else if (response.data.length > 0) {
-        // All devices offline - clear selection
+      } else {
+        // None online, or none found at all (e.g. the device was unplugged):
+        // the old selection no longer exists. Harmless when nothing was selected.
         clearSelection();
       }
     } catch (error) {
