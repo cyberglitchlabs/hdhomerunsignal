@@ -1,16 +1,22 @@
 import { useEffect, useState } from 'react';
 import axios from 'axios';
 import { createCancelGate } from '../utils/cancelGate';
-import { channelFromStatus, getChannelRange, stepChannel } from '../utils/channels';
+import { channelFromStatus, getChannelRange, stepChannel, tuneTarget } from '../utils/channels';
 
 /**
  * Tune the selected tuner and keep the CH field and the program list in step
  * with what it is actually tuned to.
  *
+ * channelMap is the map channel numbers are read and typed in; deviceChannelMap
+ * is the one the device itself is set to, when known. When they differ the tune
+ * is sent as a frequency (see tuneTarget) so the device's setting is not touched.
+ *
  * clearAtsc3Info drops the ATSC 3.0 details held elsewhere whenever the old
  * channel's data goes stale.
  */
-export function useChannelControl({ selectedDevice, selectedTuner, region, channelMap, tunerStatus, clearAtsc3Info }) {
+export function useChannelControl({
+  selectedDevice, selectedTuner, region, channelMap, deviceChannelMap, tunerStatus, clearAtsc3Info
+}) {
   const [directChannel, setDirectChannel] = useState('');
   const [currentChannelPrograms, setCurrentChannelPrograms] = useState([]);
   // Every program fetch checks this before writing, so one that is overtaken
@@ -93,6 +99,12 @@ export function useChannelControl({ selectedDevice, selectedTuner, region, chann
   const tuneToDirectChannel = async (channel) => {
     if (!selectedDevice || !channel) return;
 
+    const target = tuneTarget(channel, region, channelMap, deviceChannelMap);
+    if (target === null) {
+      console.warn(`Channel ${channel} does not exist in ${channelMap}`);
+      return;
+    }
+
     try {
       // Cancel any pending program fetch from previous channel change
       programFetchGate.cancel();
@@ -106,7 +118,7 @@ export function useChannelControl({ selectedDevice, selectedTuner, region, chann
 
       // Use regular tuning - let backend auto-detect ATSC 3.0
       await axios.post(`/api/v1/devices/${selectedDevice}/tuner/${selectedTuner}/channel`, {
-        channel
+        channel: target
       });
       if (!isCurrent()) return;
 

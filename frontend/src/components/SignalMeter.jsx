@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Alert, Box, Button, Grid } from '@mui/material';
 import AntennaMode from './AntennaMode';
 import Atsc3Panels from './signal/Atsc3Panels';
@@ -53,9 +53,18 @@ function SignalMeter() {
   });
 
   // What the device itself has each tuner set to decides what channel numbers
-  // mean, so it overrides the map selected in the page where it is known.
+  // mean. The user can pick another map in the page; that only changes how this
+  // page reads and tunes (by frequency), never the device, and is forgotten on a
+  // device or region change.
   const deviceChannelMaps = useDeviceChannelMaps(selectedDevice, deviceInfo?.tuners, tunerStatus?.channel);
-  const activeChannelMap = effectiveChannelMap(deviceChannelMaps, selectedTuner, channelMap);
+  const deviceChannelMap = deviceChannelMaps[selectedTuner];
+  const [pickedMap, setPickedMap] = useState(null);
+  useEffect(() => setPickedMap(null), [selectedDevice, region]);
+  const activeChannelMap = effectiveChannelMap(deviceChannelMaps, selectedTuner, pickedMap, channelMap);
+  const changeChannelMap = (map) => {
+    setChannelMap(map);
+    setPickedMap(map === deviceChannelMap ? null : map);
+  };
 
   const {
     directChannel,
@@ -65,7 +74,7 @@ function SignalMeter() {
     incrementChannel,
     decrementChannel,
     clearTuner
-  } = useChannelControl({ selectedDevice, selectedTuner, region, channelMap: activeChannelMap, tunerStatus, clearAtsc3Info });
+  } = useChannelControl({ selectedDevice, selectedTuner, region, channelMap: activeChannelMap, deviceChannelMap, tunerStatus, clearAtsc3Info });
 
   const showTunerPanels = !antennaMode && selectedDevice;
 
@@ -104,7 +113,7 @@ function SignalMeter() {
             <AntennaMode
               allTunersData={allTunersData}
               region={region}
-              channelMapFor={(tuner) => effectiveChannelMap(deviceChannelMaps, tuner, channelMap)}
+              channelMapFor={(tuner) => effectiveChannelMap(deviceChannelMaps, tuner, pickedMap, channelMap)}
             />
           </Grid>
         )}
@@ -130,8 +139,8 @@ function SignalMeter() {
           <TunerSettings
             region={region}
             channelMap={activeChannelMap}
-            deviceChannelMap={deviceChannelMaps[selectedTuner]}
-            onChannelMapChange={setChannelMap}
+            deviceChannelMap={deviceChannelMap}
+            onChannelMapChange={changeChannelMap}
             deviceInfo={deviceInfo}
             selectedTuner={selectedTuner}
             onTunerChange={setSelectedTuner}

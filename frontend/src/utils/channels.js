@@ -38,8 +38,11 @@ export const DEFAULT_CHANNEL_MAP = {
 // Channel plans for the cable, HRC and IRC maps, from libhdhomerun's
 // hdhomerun_channels.c. Each range is [first channel, last channel, frequency
 // of the first channel in Hz, spacing in Hz]. HRC and IRC channels sit at offset
-// frequencies, so a reported frequency is matched to within half a spacing.
+// frequencies, and the tables already hold them, so a reported frequency has to
+// be within PLAN_TOLERANCE_HZ of a channel's; anything further is another plan's.
 // Canadian maps use the US tables; EU and AU cable share one table.
+const PLAN_TOLERANCE_HZ = 500000;
+
 const CABLE_PLANS = {
   'us-cable': [
     [2, 4, 57000000, 6000000], [5, 6, 79000000, 6000000], [7, 13, 177000000, 6000000],
@@ -66,7 +69,7 @@ function cablePlan(channelMap) {
   return CABLE_PLANS[key] || null;
 }
 
-// The channel at a frequency in a cable plan, or null if none is within half a spacing
+// The channel at a frequency in a cable plan, or null if none is within the tolerance
 function planFrequencyToChannel(plan, freqHz) {
   let best = null;
   let bestDiff = Infinity;
@@ -74,7 +77,7 @@ function planFrequencyToChannel(plan, freqHz) {
     const index = Math.round((freqHz - base) / spacing);
     if (index < 0 || first + index > last) continue;
     const diff = Math.abs(freqHz - (base + index * spacing));
-    if (diff <= spacing / 2 && diff < bestDiff) {
+    if (diff <= Math.min(spacing / 2, PLAN_TOLERANCE_HZ) && diff < bestDiff) {
       best = first + index;
       bestDiff = diff;
     }
@@ -236,11 +239,12 @@ export function channelToFrequency(channel, region = 'us', channelMap = '') {
   return null;
 }
 
-// The channel map to read channels with: the tuner's own map when the device
-// reported one (it is what the device uses to interpret channel numbers),
-// otherwise the one selected in the page.
-export function effectiveChannelMap(deviceMaps, tuner, selectedMap) {
-  return deviceMaps?.[tuner] ?? selectedMap;
+// The channel map channel numbers are read and typed in: one the user picked
+// that differs from the device's, else the tuner's own map when the device
+// reported one (it is what the device uses to interpret numbers), else the
+// page's default for the region.
+export function effectiveChannelMap(deviceMaps, tuner, pickedMap, defaultMap) {
+  return pickedMap ?? deviceMaps?.[tuner] ?? defaultMap;
 }
 
 // Valid channel numbers for the CH field and the up/down buttons. Cable maps
@@ -284,6 +288,19 @@ export function streamFrequency(statusChannel, region, channelMap = '') {
   const rawChannel = statusChannel?.split(':')[1];
   if (!rawChannel) return null;
   return (rawChannel.length >= 9 ? rawChannel : channelToFrequency(rawChannel, region, channelMap)) || null;
+}
+
+// What to send the device to tune `channel`. The device reads a plain number
+// with its own channel map, so when the map in use is that one (or the device's
+// is not known) the number goes as typed. Otherwise the frequency comes from the
+// map in use and is sent as such, which leaves the device's own setting alone.
+// Null when that map has no such channel. Anything that is not a plain channel
+// number (such as 'auto:27') is passed through.
+export function tuneTarget(channel, region, channelMap, deviceMap) {
+  if (!deviceMap || channelMap === deviceMap) return channel;
+  if (!/^(\d+|9A)$/i.test(channel)) return channel;
+  const frequency = channelToFrequency(channel, region, channelMap);
+  return frequency === null ? null : `auto:${Math.round(frequency)}`;
 }
 
 // The channel one step up (+1) or down (-1) from the CH field, clamped to the

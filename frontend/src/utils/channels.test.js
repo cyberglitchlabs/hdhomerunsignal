@@ -9,7 +9,8 @@ import {
   frequencyToChannel,
   getChannelRange,
   stepChannel,
-  streamFrequency
+  streamFrequency,
+  tuneTarget
 } from './channels';
 
 const range = (from, to) => Array.from({ length: to - from + 1 }, (_, i) => from + i);
@@ -229,6 +230,19 @@ describe('cable, HRC and IRC channel maps', () => {
     expect(frequencyToChannel(40e6, 'us', 'us-cable')).toBeNull();
   });
 
+  test('a frequency from another plan is not given a cable channel', () => {
+    expect(frequencyToChannel(473e6, 'us', 'us-cable')).toBeNull(); // broadcast channel 14, 2 MHz off cable 65
+    expect(frequencyToChannel(581e6, 'us', 'us-cable')).toBeNull(); // broadcast channel 32
+    expect(frequencyToChannel(581e6, 'us', 'us-hrc')).toBeNull();
+    expect(frequencyToChannel(581e6, 'us', 'us-irc')).toBeNull();
+  });
+
+  test('a small tuner offset still places the channel', () => {
+    expect(frequencyToChannel(243.4e6, 'us', 'us-cable')).toBe(27);
+    expect(frequencyToChannel(242.6e6, 'us', 'us-cable')).toBe(27);
+    expect(frequencyToChannel(243.6e6, 'us', 'us-cable')).toBeNull();
+  });
+
   test('EU and AU cable use the frequency in MHz as the channel number', () => {
     expect(frequencyToChannel(108e6, 'eu', 'eu-cable')).toBe(108);
     expect(frequencyToChannel(450e6, 'eu', 'eu-cable')).toBe(450);
@@ -288,14 +302,48 @@ describe('cable, HRC and IRC channel maps', () => {
 });
 
 describe('effectiveChannelMap', () => {
-  test("is the tuner's own map when the device reported one", () => {
-    expect(effectiveChannelMap(['us-bcast', 'us-cable'], 1, 'us-hrc')).toBe('us-cable');
+  test("is the tuner's own map when the device reported one and nothing else was picked", () => {
+    expect(effectiveChannelMap(['us-bcast', 'us-cable'], 1, null, 'us-hrc')).toBe('us-cable');
   });
 
-  test('falls back to the selected map when the device did not report one', () => {
-    expect(effectiveChannelMap([], 0, 'us-hrc')).toBe('us-hrc');
-    expect(effectiveChannelMap(undefined, 0, 'us-hrc')).toBe('us-hrc');
-    expect(effectiveChannelMap([null, 'us-cable'], 0, 'us-hrc')).toBe('us-hrc');
-    expect(effectiveChannelMap(['us-bcast'], 3, 'us-hrc')).toBe('us-hrc');
+  test('is the one the user picked, over the device\'s', () => {
+    expect(effectiveChannelMap(['us-bcast'], 0, 'us-cable', 'us-bcast')).toBe('us-cable');
+  });
+
+  test('falls back to the default map when the device did not report one', () => {
+    expect(effectiveChannelMap([], 0, null, 'us-hrc')).toBe('us-hrc');
+    expect(effectiveChannelMap(undefined, 0, null, 'us-hrc')).toBe('us-hrc');
+    expect(effectiveChannelMap([null, 'us-cable'], 0, null, 'us-hrc')).toBe('us-hrc');
+    expect(effectiveChannelMap(['us-bcast'], 3, null, 'us-hrc')).toBe('us-hrc');
+  });
+});
+
+describe('tuneTarget', () => {
+  test("sends the channel number as typed when the device's own map is the one in use", () => {
+    expect(tuneTarget('27', 'us', 'us-bcast', 'us-bcast')).toBe('27');
+    expect(tuneTarget('27', 'us', 'us-cable', 'us-cable')).toBe('27');
+  });
+
+  test("sends the channel number as typed when the device's map is not known", () => {
+    expect(tuneTarget('27', 'us', 'us-cable', undefined)).toBe('27');
+    expect(tuneTarget('27', 'us', 'us-cable', null)).toBe('27');
+  });
+
+  test('sends a frequency from the chosen map when it differs from the device\'s', () => {
+    expect(tuneTarget('27', 'us', 'us-cable', 'us-bcast')).toBe('auto:243000000');
+    expect(tuneTarget('100', 'us', 'us-cable', 'us-bcast')).toBe('auto:651000000');
+    expect(tuneTarget('23', 'us', 'us-hrc', 'us-bcast')).toBe('auto:217760800');
+    expect(tuneTarget('450', 'eu', 'eu-cable', 'eu-bcast')).toBe('auto:450000000');
+    expect(tuneTarget('27', 'us', 'us-bcast', 'us-cable')).toBe('auto:551000000');
+  });
+
+  test('is null when the chosen map has no such channel, so nothing is sent', () => {
+    expect(tuneTarget('159', 'us', 'us-cable', 'us-bcast')).toBeNull();
+    expect(tuneTarget('1', 'us', 'us-cable', 'us-bcast')).toBeNull();
+  });
+
+  test('anything that is not a plain channel number passes through', () => {
+    expect(tuneTarget('auto:27', 'us', 'us-cable', 'us-bcast')).toBe('auto:27');
+    expect(tuneTarget('atsc3:27', 'us', 'us-cable', 'us-bcast')).toBe('atsc3:27');
   });
 });

@@ -2,9 +2,12 @@ import { Box, FormControl, FormHelperText, InputLabel, MenuItem, Select } from '
 import PanelCard from './PanelCard';
 import { CHANNEL_MAPS } from '../../utils/channels';
 
-// The channel map in use, and which of the device's tuners to look at. When the
-// device reports the map it is set to, that is the one in use and it cannot be
-// changed here: the device decides what a channel number means.
+const labelOf = (value) => Object.values(CHANNEL_MAPS).flat().find((map) => map.value === value)?.label || value;
+
+// The channel map in use, and which of the device's tuners to look at. Channel
+// numbers are read with the device's own map unless another is chosen here; a
+// different choice only changes how this page tunes (by frequency), never the
+// device's setting, and is not remembered.
 export default function TunerSettings({
   region, channelMap, deviceChannelMap, onChannelMapChange, deviceInfo, selectedTuner, onTunerChange
 }) {
@@ -21,7 +24,6 @@ export default function TunerSettings({
           <Select
             value={channelMap}
             label="Channel Map"
-            disabled={Boolean(deviceChannelMap)}
             onChange={(e) => onChannelMapChange(e.target.value)}
           >
             {options.map((map) => (
@@ -30,7 +32,13 @@ export default function TunerSettings({
               </MenuItem>
             ))}
           </Select>
-          {deviceChannelMap && <FormHelperText>Set on the device</FormHelperText>}
+          {deviceChannelMap && (
+            <FormHelperText>
+              {deviceChannelMap === channelMap
+                ? "The device's channel map"
+                : `The device is set to ${labelOf(deviceChannelMap)}. Tuning by frequency; the device's setting is not changed.`}
+            </FormHelperText>
+          )}
         </FormControl>
 
         {deviceInfo && (
