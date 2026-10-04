@@ -53,6 +53,13 @@ jobs:
           cache-dependency-path: frontend/package-lock.json
       - run: npm ci --ignore-scripts
       - run: npm test
+      - name: Generated API types are current
+        run: |
+          npm run api:types
+          git diff --exit-code -- src/api/schema.d.ts || {
+            echo "::error::src/api/schema.d.ts is out of date; run 'npm run api:types' in frontend/"
+            exit 1
+          }
       - run: npm run build
       - run: npm audit --omit=dev --audit-level=high
 
