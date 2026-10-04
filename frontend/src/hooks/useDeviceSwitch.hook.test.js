@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { renderHook, act, waitFor } from '@testing-library/react';
 import axios from 'axios';
-import { useDevices, FALLBACK_DEVICE_INFO } from './useDevices';
+import { useDevices, FALLBACK_DEVICE_INFO, INFO_TIMEOUT_MS } from './useDevices';
 import { useEventStream } from './useEventStream';
 import { useSelectedTuner } from './useSelectedTuner';
 
@@ -161,5 +161,58 @@ describe('useDevices info request', () => {
 
     expect(result.current.deviceInfo).toBeNull();
     expect(result.current.infoError).toBe(false);
+  });
+});
+
+describe('an assumed (fallback) device info', () => {
+  test('is marked as assumed, so it cannot be mistaken for loaded info', () => {
+    expect(FALLBACK_DEVICE_INFO).toEqual({ tuners: 2, assumed: true });
+  });
+
+  test('limits the tuner in use but does not overwrite the choice, so a retry gets it back', () => {
+    const { result, rerender } = renderHook(({ info }) => useSelectedTuner(info), {
+      initialProps: { info: { tuners: 4 } }
+    });
+    act(() => result.current[1](3));
+    expect(result.current[0]).toBe(3);
+
+    rerender({ info: FALLBACK_DEVICE_INFO }); // /info failed, so two tuners are assumed
+    expect(result.current[0]).toBe(1);
+
+    rerender({ info: { tuners: 4 } }); // Retry loaded the real info
+    expect(result.current[0]).toBe(3);
+  });
+
+  test('real info still moves the choice off a tuner the device lacks', () => {
+    const { result, rerender } = renderHook(({ info }) => useSelectedTuner(info), {
+      initialProps: { info: { tuners: 4 } }
+    });
+    act(() => result.current[1](3));
+    rerender({ info: { tuners: 2 } });
+    rerender({ info: { tuners: 4 } });
+    expect(result.current[0]).toBe(1); // it did not drift back to 3
+  });
+});
+
+describe('the info request timeout', () => {
+  test('is bounded, and asked for with a timeout', async () => {
+    axios.get.mockImplementation(async (url) => (url.includes('/info') ? { data: { tuners: 4 } } : { data: [{ id: 'AAAA', online: true }] }));
+    const { result } = renderHook(() => useDevices());
+    await waitFor(() => expect(result.current.deviceInfo).toEqual({ tuners: 4 }));
+
+    const infoCall = axios.get.mock.calls.find(([url]) => url.includes('/info'));
+    expect(infoCall[1]).toEqual({ timeout: INFO_TIMEOUT_MS });
+    expect(INFO_TIMEOUT_MS).toBeGreaterThan(0);
+    expect(INFO_TIMEOUT_MS).toBeLessThanOrEqual(10000);
+  });
+
+  test('a timed-out request becomes the assumed info, so monitoring can start', async () => {
+    axios.get.mockImplementation(async (url) => {
+      if (url.includes('/info')) throw Object.assign(new Error('timeout of 5000ms exceeded'), { code: 'ECONNABORTED' });
+      return { data: [{ id: 'AAAA', online: true }] };
+    });
+    const { result } = renderHook(() => useDevices());
+    await waitFor(() => expect(result.current.deviceInfo).toEqual(FALLBACK_DEVICE_INFO));
+    expect(result.current.infoError).toBe(true);
   });
 });
