@@ -829,3 +829,64 @@ async fn a_stream_opened_after_shutdown_began_ends_at_once() {
     .await;
     assert!(ended.is_ok());
 }
+
+// -------------------------------------------------------------- channel maps
+
+#[tokio::test]
+async fn channel_maps_are_read_per_tuner_from_the_device() {
+    let app = app(
+        Mock::default()
+            .with("/tuner0/channelmap", "us-bcast\n")
+            .with("/tuner1/channelmap", "us-cable\n"),
+        &[],
+    );
+    let (status, body) = app
+        .get("/api/v1/devices/10.0.0.5/channelmaps?tuners=2")
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(json_of(&body), json!(["us-bcast", "us-cable"]));
+}
+
+#[tokio::test]
+async fn a_tuner_that_does_not_answer_or_has_an_unknown_map_is_null() {
+    let app = app(
+        Mock::default()
+            .with("/tuner0/channelmap", "jp-bcast")
+            .with("/tuner2/channelmap", "eu-cable"),
+        &[],
+    );
+    let (status, body) = app
+        .get("/api/v1/devices/10.0.0.5/channelmaps?tuners=3")
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(json_of(&body), json!([null, null, "eu-cable"]));
+}
+
+#[tokio::test]
+async fn reading_channel_maps_never_changes_the_device() {
+    let app = app(Mock::default().with("/tuner0/channelmap", "us-bcast"), &[]);
+    app.get("/api/v1/devices/10.0.0.5/channelmaps?tuners=1")
+        .await;
+    let calls = app.calls();
+    assert!(
+        calls.iter().all(|call| call.starts_with("get ")),
+        "{calls:?}"
+    );
+}
+
+#[tokio::test]
+async fn channel_maps_need_a_valid_device_and_tuner_count() {
+    let app = app(Mock::default(), &[]);
+    for path in [
+        "/api/v1/devices/10.0.0.5/channelmaps",
+        "/api/v1/devices/10.0.0.5/channelmaps?tuners=0",
+        "/api/v1/devices/10.0.0.5/channelmaps?tuners=9",
+        "/api/v1/devices/10.0.0.5/channelmaps?tuners=abc",
+        "/api/v1/devices/10.0.0.5/channelmaps?tuners=1&tuners=2",
+        "/api/v1/devices/bad%20host/channelmaps?tuners=2",
+    ] {
+        let (status, _) = app.get(path).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{path}");
+    }
+    assert!(app.calls().is_empty(), "nothing reached the device");
+}

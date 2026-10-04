@@ -40,7 +40,8 @@ function TunerHistoryCharts({ status }) {
   );
 }
 
-function AntennaMode({ allTunersData, region, channelMap }) {
+// channelMapFor(tuner) is the channel map to read that tuner's channel with
+function AntennaMode({ allTunersData, region, channelMapFor }) {
   const getSymbolColor = (symbolQuality) => {
     if (symbolQuality === 100) return 'success';
     if (symbolQuality > 0) return 'error';
@@ -88,7 +89,7 @@ function AntennaMode({ allTunersData, region, channelMap }) {
 
                 {status?.channel && status.channel !== 'none' && (
                   <Typography variant="body2" sx={{ fontSize: '0.8rem', mb: 1, color: 'text.secondary' }}>
-                    {formatChannelDisplay(status.channel, region, channelMap)}
+                    {formatChannelDisplay(status.channel, region, channelMapFor(tuner))}
                   </Typography>
                 )}
 

@@ -20,6 +20,7 @@ setTimeout(() => {
   if (args[0] === 'discover' && args.length === 1) { if (process.env.FAKE_DISCOVER_OUTPUT) console.log(process.env.FAKE_DISCOVER_OUTPUT); }
   else if (target === '/sys/model') console.log('HDHR5-4US');
   else if (target === '/sys/hwmodel') console.log('HDHR5-4US');
+  else if (/\\/tuner\\d\\/channelmap$/.test(target)) console.log('us-cable');
   else if (/\\/status$/.test(target)) console.log('ch=8vsb:27 lock=8vsb ss=90 snq=80 seq=100 bps=0 pps=0');
 }, Number(process.env.FAKE_HDHR_DELAY_MS || 0));
 `;

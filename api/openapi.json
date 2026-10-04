@@ -119,6 +119,66 @@
         }
       }
     },
+    "/api/v1/devices/{id}/channelmaps": {
+      "get": {
+        "tags": [
+          "devices"
+        ],
+        "summary": "Each tuner's channel map",
+        "description": "The channel map each tuner is set to on the device, which decides what a channel number such as `27` means when tuning. Read-only. Null for a tuner that does not answer or has a map this app does not know.",
+        "operationId": "channel_maps",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "A device ID (e.g. `1080ABCD`), IPv4 address or hostname: letters, digits, dots and hyphens, starting with a letter or digit, at most 253 characters.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "tuners",
+            "in": "query",
+            "description": "How many tuners to read, 1 to 8 (plain digits).",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "One entry per tuner, in order.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A device or `tuners` is not valid.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/devices/{id}/info": {
       "get": {
         "tags": [

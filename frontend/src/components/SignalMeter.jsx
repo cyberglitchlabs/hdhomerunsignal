@@ -10,6 +10,7 @@ import StreamContextMenu from './signal/StreamContextMenu';
 import TunerMeters from './signal/TunerMeters';
 import TunerSettings from './signal/TunerSettings';
 import { useChannelControl } from '../hooks/useChannelControl';
+import { useDeviceChannelMaps } from '../hooks/useDeviceChannelMaps';
 import { useDevices } from '../hooks/useDevices';
 import { useInstallPrompt } from '../hooks/useInstallPrompt';
 import { useRegion } from '../hooks/useRegion';
@@ -18,7 +19,7 @@ import { useSignalHistory } from '../hooks/useSignalHistory';
 import { statsKey, useSignalStats } from '../hooks/useSignalStats';
 import { useEventStream } from '../hooks/useEventStream';
 import { useTunerState } from '../hooks/useTunerState';
-import { getChannelRange } from '../utils/channels';
+import { effectiveChannelMap, getChannelRange } from '../utils/channels';
 
 function SignalMeter() {
   const { region, channelMap, setChannelMap, changeRegion } = useRegion();
@@ -51,6 +52,11 @@ function SignalMeter() {
     onLeaveAntennaMode: () => setAllTunersData([])
   });
 
+  // What the device itself has each tuner set to decides what channel numbers
+  // mean, so it overrides the map selected in the page where it is known.
+  const deviceChannelMaps = useDeviceChannelMaps(selectedDevice, deviceInfo?.tuners, tunerStatus?.channel);
+  const activeChannelMap = effectiveChannelMap(deviceChannelMaps, selectedTuner, channelMap);
+
   const {
     directChannel,
     setDirectChannel,
@@ -59,7 +65,7 @@ function SignalMeter() {
     incrementChannel,
     decrementChannel,
     clearTuner
-  } = useChannelControl({ selectedDevice, selectedTuner, region, channelMap, tunerStatus, clearAtsc3Info });
+  } = useChannelControl({ selectedDevice, selectedTuner, region, channelMap: activeChannelMap, tunerStatus, clearAtsc3Info });
 
   const showTunerPanels = !antennaMode && selectedDevice;
 
@@ -95,7 +101,11 @@ function SignalMeter() {
         {/* Antenna Tuning Mode */}
         {antennaMode && selectedDevice && (
           <Grid item xs={12}>
-            <AntennaMode allTunersData={allTunersData} region={region} channelMap={channelMap} />
+            <AntennaMode
+              allTunersData={allTunersData}
+              region={region}
+              channelMapFor={(tuner) => effectiveChannelMap(deviceChannelMaps, tuner, channelMap)}
+            />
           </Grid>
         )}
 
@@ -106,7 +116,7 @@ function SignalMeter() {
               selectedDevice={selectedDevice}
               directChannel={directChannel}
               onDirectChannelChange={setDirectChannel}
-              maxChannel={getChannelRange(region, channelMap).max}
+              maxChannel={getChannelRange(region, activeChannelMap).max}
               onTune={tuneToDirectChannel}
               onPrevious={decrementChannel}
               onNext={incrementChannel}
@@ -119,7 +129,8 @@ function SignalMeter() {
         {showTunerPanels && (
           <TunerSettings
             region={region}
-            channelMap={channelMap}
+            channelMap={activeChannelMap}
+            deviceChannelMap={deviceChannelMaps[selectedTuner]}
             onChannelMapChange={setChannelMap}
             deviceInfo={deviceInfo}
             selectedTuner={selectedTuner}
@@ -136,7 +147,7 @@ function SignalMeter() {
             programs={currentChannelPrograms}
             tunerStatus={tunerStatus}
             region={region}
-            channelMap={channelMap}
+            channelMap={activeChannelMap}
             selectedDevice={selectedDevice}
             onContextMenu={setContextMenu}
           />
@@ -148,7 +159,7 @@ function SignalMeter() {
         onClose={() => setContextMenu(null)}
         tunerStatus={tunerStatus}
         region={region}
-        channelMap={channelMap}
+        channelMap={activeChannelMap}
         selectedDevice={selectedDevice}
       />
     </Box>

@@ -17,6 +17,7 @@ describe('API: injection attempts never reach hdhomerun_config', () => {
 
   const deviceRoutes = [
     ['GET', (d) => `/api/v1/devices/${enc(d)}/info`],
+    ['GET', (d) => `/api/v1/devices/${enc(d)}/channelmaps?tuners=2`],
     ['GET', (d) => `/api/v1/devices/${enc(d)}/scan/0`],
     ['GET', (d) => `/api/v1/devices/${enc(d)}/tuner/0/status`],
     ['GET', (d) => `/api/v1/devices/${enc(d)}/tuner/0/programs`],
@@ -203,6 +204,32 @@ describe('API: legitimate requests reach the tool with exact arguments', () => {
     const calls = server.calls();
     assert.deepEqual(calls[0], ['example-host.local', 'get', '/sys/model']);
     for (const call of calls.slice(1)) assert.match(call.join(' '), /^example-host\.local get \/tuner[0-7]\/status$/);
+  });
+});
+
+describe('API: channel maps', () => {
+  let server;
+  before(async () => { server = await startServer(); });
+  after(() => server.stop());
+  beforeEach(() => server.clearCalls());
+
+  test('each tuner\'s map is read from the device and nothing is set', async () => {
+    const res = await request(server.port, { path: '/api/v1/devices/example-host.local/channelmaps?tuners=2' });
+    assert.equal(res.status, 200);
+    assert.deepEqual(JSON.parse(res.body), ['us-cable', 'us-cable']);
+    const calls = server.calls().map((call) => call.join(' ')).sort();
+    assert.deepEqual(calls, [
+      'example-host.local get /tuner0/channelmap',
+      'example-host.local get /tuner1/channelmap'
+    ]);
+  });
+
+  test('the tuner count must be 1 to 8', async () => {
+    for (const tuners of ['', '?tuners=0', '?tuners=9', '?tuners=x']) {
+      const res = await request(server.port, { path: `/api/v1/devices/example-host.local/channelmaps${tuners}` });
+      assert.equal(res.status, 400, tuners);
+    }
+    assert.deepEqual(server.calls(), []);
   });
 });
 

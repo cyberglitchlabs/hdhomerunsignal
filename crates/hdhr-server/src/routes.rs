@@ -35,6 +35,7 @@ pub fn api() -> OpenApiRouter<Arc<AppState>> {
     OpenApiRouter::new()
         .routes(routes!(list_devices))
         .routes(routes!(device_info))
+        .routes(routes!(channel_maps))
         .routes(routes!(scan))
         .routes(routes!(tuner_status))
         .routes(routes!(programs))
@@ -65,6 +66,17 @@ pub(crate) fn tuner(tuner: &str) -> ApiResult<u8> {
 /// The device and tuner of a path, checked in that order.
 fn device_and_tuner<'a>(id: &'a str, tuner_text: &str) -> ApiResult<(&'a str, u8)> {
     Ok((device(id)?, tuner(tuner_text)?))
+}
+
+/// The `tuners` query parameter: 1 to 8, as a plain decimal number.
+pub(crate) fn tuner_count(query: Option<String>) -> ApiResult<u8> {
+    Query::new(query)
+        .get("tuners")
+        .map(str::trim)
+        .filter(|text| !text.is_empty() && text.bytes().all(|b| b.is_ascii_digit()))
+        .and_then(|text| text.parse::<u8>().ok())
+        .filter(|count| (1..=8).contains(count))
+        .ok_or_else(|| ApiError::bad_request("Invalid tuners"))
 }
 
 /// A query string where each name must appear at most once: a repeated name is
@@ -221,6 +233,25 @@ async fn device_info(
     Path(id): Path<String>,
 ) -> ApiResult<impl IntoResponse> {
     Ok(Json(state.hdhr.device_info(device(&id)?).await))
+}
+
+#[utoipa::path(
+    get,
+    path = "/devices/{id}/channelmaps",
+    tag = "devices",
+    summary = "Each tuner's channel map",
+    description = "The channel map each tuner is set to on the device, which decides what a channel number such as `27` means when tuning. Read-only. Null for a tuner that does not answer or has a map this app does not know.",
+    params(("id" = String, Path, description = "A device ID (e.g. `1080ABCD`), IPv4 address or hostname: letters, digits, dots and hyphens, starting with a letter or digit, at most 253 characters."), ("tuners" = u8, Query, description = "How many tuners to read, 1 to 8 (plain digits).")),
+    responses((status = 200, description = "One entry per tuner, in order.", body = Vec<Option<String>>), (status = 400, description = "A device or `tuners` is not valid.", body = ErrorBody))
+)]
+async fn channel_maps(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+    RawQuery(query): RawQuery,
+) -> ApiResult<impl IntoResponse> {
+    let device = device(&id)?;
+    let tuners = tuner_count(query)?;
+    Ok(Json(state.hdhr.channel_maps(device, tuners).await))
 }
 
 #[utoipa::path(

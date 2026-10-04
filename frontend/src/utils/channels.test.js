@@ -4,6 +4,7 @@ import {
   REGIONS,
   channelFromStatus,
   channelToFrequency,
+  effectiveChannelMap,
   formatChannelDisplay,
   frequencyToChannel,
   getChannelRange,
@@ -283,5 +284,18 @@ describe('cable, HRC and IRC channel maps', () => {
     expect(streamFrequency('auto:27', 'us', 'us-cable')).toBe(243e6);
     expect(streamFrequency('auto:27', 'us', 'us-bcast')).toBe(551e6);
     expect(streamFrequency('auto6c:651000000', 'us', 'us-cable')).toBe('651000000');
+  });
+});
+
+describe('effectiveChannelMap', () => {
+  test("is the tuner's own map when the device reported one", () => {
+    expect(effectiveChannelMap(['us-bcast', 'us-cable'], 1, 'us-hrc')).toBe('us-cable');
+  });
+
+  test('falls back to the selected map when the device did not report one', () => {
+    expect(effectiveChannelMap([], 0, 'us-hrc')).toBe('us-hrc');
+    expect(effectiveChannelMap(undefined, 0, 'us-hrc')).toBe('us-hrc');
+    expect(effectiveChannelMap([null, 'us-cable'], 0, 'us-hrc')).toBe('us-hrc');
+    expect(effectiveChannelMap(['us-bcast'], 3, 'us-hrc')).toBe('us-hrc');
   });
 });
