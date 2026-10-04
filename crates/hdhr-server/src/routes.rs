@@ -13,14 +13,15 @@ use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
-use hdhr_core::validate::{self, log_safe};
+use hdhr_core::validate;
 use serde_json::{Value, json};
 
 use crate::discovery::discover_devices;
 use crate::error::ApiError;
 use crate::state::AppState;
+use crate::stream;
 
-type ApiResult<T> = Result<T, ApiError>;
+pub(crate) type ApiResult<T> = Result<T, ApiError>;
 
 /// Largest request body accepted.
 pub const BODY_LIMIT: usize = 10 * 1024;
@@ -47,17 +48,22 @@ pub fn api(state: Arc<AppState>) -> Router<Arc<AppState>> {
         .route("/devices/{id}/tuner/{tuner}/atsc3", post(set_atsc3))
         .route("/devices/{id}/stream/url", get(stream_url))
         .route("/devices/{id}/stream/play.m3u", get(playlist))
+        .route(
+            "/devices/{id}/tuner/{tuner}/stream",
+            get(stream::tuner_stream),
+        )
+        .route("/devices/{id}/antenna/stream", get(stream::antenna_stream))
         .route("/version", get(version))
         .merge(scan)
 }
 
 // ----------------------------------------------------------------- validation
 
-fn device(id: &str) -> ApiResult<&str> {
+pub(crate) fn device(id: &str) -> ApiResult<&str> {
     validate::device_host(id).ok_or_else(|| ApiError::bad_request("Invalid device id"))
 }
 
-fn tuner(tuner: &str) -> ApiResult<u8> {
+pub(crate) fn tuner(tuner: &str) -> ApiResult<u8> {
     validate::tuner(tuner).ok_or_else(|| ApiError::bad_request("Invalid tuner"))
 }
 
@@ -68,10 +74,10 @@ fn device_and_tuner<'a>(id: &'a str, tuner_text: &str) -> ApiResult<(&'a str, u8
 
 /// A query string where each name must appear at most once: a repeated name is
 /// not a usable value, and is treated as missing.
-struct Query(Vec<(String, String)>);
+pub(crate) struct Query(Vec<(String, String)>);
 
 impl Query {
-    fn new(raw: Option<String>) -> Self {
+    pub(crate) fn new(raw: Option<String>) -> Self {
         let raw = raw.unwrap_or_default();
         Self(
             url::form_urlencoded::parse(raw.as_bytes())
@@ -80,7 +86,7 @@ impl Query {
         )
     }
 
-    fn get(&self, name: &str) -> Option<&str> {
+    pub(crate) fn get(&self, name: &str) -> Option<&str> {
         let mut found = self.0.iter().filter(|(key, _)| key == name);
         match (found.next(), found.next()) {
             (Some((_, value)), None) => Some(value),
@@ -127,13 +133,15 @@ fn channel_text(value: Option<&Value>) -> Option<String> {
 
 // ------------------------------------------------------------------ middleware
 
-/// Counts every request against the general limit. The caller's address is the
-/// connection's, or the one `HDHR_TRUST_PROXY` says a proxy forwarded.
+/// Counts every request, except event streams, against the general limit.
 pub async fn general_limit(
     State(state): State<Arc<AppState>>,
     request: Request,
     next: Next,
 ) -> Response {
+    if is_stream_path(request.uri().path()) {
+        return next.run(request).await;
+    }
     match limit(&state, &state.general_limiter, &request) {
         Some(refused) => refused,
         None => next.run(request).await,
@@ -152,24 +160,48 @@ fn limit(
     limiter: &crate::limits::RateLimiter,
     request: &Request,
 ) -> Option<Response> {
-    // The server always supplies the peer address. Without one the request is
-    // still counted, under a shared key, rather than skipping the limit.
-    let client = match request.extensions().get::<ConnectInfo<SocketAddr>>() {
-        Some(ConnectInfo(peer)) => {
-            let forwarded = request
-                .headers()
-                .get("x-forwarded-for")
-                .and_then(|v| v.to_str().ok());
-            state.clients.resolve(peer.ip(), forwarded)
-        }
-        None => "unknown".to_owned(),
-    };
+    let client = client_key(
+        state,
+        request.extensions().get::<ConnectInfo<SocketAddr>>(),
+        request.headers(),
+    );
     let wait = limiter.hit(&client).err()?;
     let mut response = ApiError::too_many("Too many requests").into_response();
     if let Ok(seconds) = HeaderValue::from_str(&wait.as_secs().max(1).to_string()) {
         response.headers_mut().insert(header::RETRY_AFTER, seconds);
     }
     Some(response)
+}
+
+/// What a client is counted as: the address the connection came from, or the one
+/// `HDHR_TRUST_PROXY` says a proxy forwarded. The server always supplies the peer
+/// address; without one the request is still counted, under a shared key, rather
+/// than skipping its limit.
+pub fn client_key(
+    state: &AppState,
+    peer: Option<&ConnectInfo<SocketAddr>>,
+    headers: &HeaderMap,
+) -> String {
+    match peer {
+        Some(ConnectInfo(peer)) => {
+            let forwarded = headers.get("x-forwarded-for").and_then(|v| v.to_str().ok());
+            state.clients.resolve(peer.ip(), forwarded)
+        }
+        None => "unknown".to_owned(),
+    }
+}
+
+/// An event stream: `/api/v1/devices/{id}/tuner/{tuner}/stream` or
+/// `/api/v1/devices/{id}/antenna/stream`. A stream stays open for as long as the
+/// page does, and a browser's `EventSource` gives up for good on a 429, so streams
+/// are bounded by the per-client stream cap instead of the request rate.
+fn is_stream_path(path: &str) -> bool {
+    let segments: Vec<&str> = path.trim_start_matches('/').split('/').collect();
+    matches!(
+        segments.as_slice(),
+        ["api", "v1", "devices", _, "tuner", _, "stream"]
+            | ["api", "v1", "devices", _, "antenna", "stream"]
+    )
 }
 
 // -------------------------------------------------------------------- handlers
@@ -228,33 +260,7 @@ async fn plp_info(
     Path((id, t)): Path<(String, String)>,
 ) -> ApiResult<impl IntoResponse> {
     let (id, tuner) = device_and_tuner(&id, &t)?;
-    Ok(Json(plp_or_none(&state, id, tuner).await))
-}
-
-/// PLP details, or `None` for a device that has none or cannot answer. A device
-/// that cannot answer fails the same way on every poll, so it is reported once.
-pub async fn plp_or_none(
-    state: &AppState,
-    id: &str,
-    tuner: u8,
-) -> Option<hdhr_core::model::PlpMap> {
-    match state.hdhr.plp_info(id, tuner).await {
-        Ok(plps) => plps,
-        Err(_) => {
-            let first = state
-                .plp_unavailable_logged
-                .lock()
-                .unwrap_or_else(|p| p.into_inner())
-                .insert(id.to_owned());
-            if first {
-                tracing::info!(
-                    "PLP info not available from {} (no ATSC 3.0 support?); not logging again",
-                    log_safe(id)
-                );
-            }
-            None
-        }
-    }
+    Ok(Json(state.plp.plp_or_none(&state.hdhr, id, tuner).await))
 }
 
 async fn l1_info(

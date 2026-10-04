@@ -8,6 +8,7 @@ use hdhr_core::validate::{self, TrustProxy};
 
 const DEFAULT_PORT: u16 = 3000;
 const DEFAULT_RATE_LIMIT: u32 = 300;
+const DEFAULT_MAX_STREAMS: usize = 16;
 
 #[derive(Debug, Clone)]
 pub struct Config {
@@ -27,6 +28,8 @@ pub struct Config {
     pub rate_limit: u32,
     /// `HDHR_TRUST_PROXY`.
     pub trust_proxy: TrustProxy,
+    /// `HDHR_MAX_STREAMS_PER_CLIENT`: open event streams one client may hold; 0 removes the cap.
+    pub max_streams_per_client: usize,
     /// `HDHR_STATIC_DIR`: the built frontend to serve.
     pub static_dir: PathBuf,
 }
@@ -59,6 +62,16 @@ impl Config {
                 DEFAULT_RATE_LIMIT
             }),
         };
+        let max_streams_per_client = match text("HDHR_MAX_STREAMS_PER_CLIENT").trim() {
+            "" => DEFAULT_MAX_STREAMS,
+            value => value.parse().unwrap_or_else(|_| {
+                tracing::warn!(
+                    "Ignoring invalid HDHR_MAX_STREAMS_PER_CLIENT {}; using {DEFAULT_MAX_STREAMS}",
+                    validate::log_safe(value)
+                );
+                DEFAULT_MAX_STREAMS
+            }),
+        };
         let trust_proxy = validate::parse_trust_proxy(get("HDHR_TRUST_PROXY").as_deref())?;
         let list = |name: &str| -> Vec<String> {
             text(name)
@@ -79,6 +92,7 @@ impl Config {
             allowed_origins: list("HDHR_ALLOWED_ORIGINS").into_iter().collect(),
             rate_limit,
             trust_proxy,
+            max_streams_per_client,
             static_dir: get("HDHR_STATIC_DIR")
                 .filter(|dir| !dir.is_empty())
                 .unwrap_or_else(|| "public".into())
@@ -103,7 +117,10 @@ mod tests {
     #[test]
     fn defaults() {
         let c = config(&[]).unwrap();
-        assert_eq!((c.port, c.rate_limit), (3000, 300));
+        assert_eq!(
+            (c.port, c.rate_limit, c.max_streams_per_client),
+            (3000, 300, 16)
+        );
         assert!(c.manual_devices.is_empty() && c.allowed_origins.is_empty());
         assert!(!c.disable_discovery && !c.disable_cloud_discovery);
         assert_eq!(c.trust_proxy, TrustProxy::Disabled);
@@ -178,6 +195,34 @@ mod tests {
         );
         assert_eq!(config(&[("HDHR_RATE_LIMIT", "0")]).unwrap().rate_limit, 0);
         assert_eq!(config(&[("HDHR_RATE_LIMIT", "5")]).unwrap().rate_limit, 5);
+    }
+
+    #[test]
+    fn the_stream_cap() {
+        assert_eq!(
+            config(&[("HDHR_MAX_STREAMS_PER_CLIENT", "2")])
+                .unwrap()
+                .max_streams_per_client,
+            2
+        );
+        assert_eq!(
+            config(&[("HDHR_MAX_STREAMS_PER_CLIENT", "0")])
+                .unwrap()
+                .max_streams_per_client,
+            0
+        );
+        assert_eq!(
+            config(&[("HDHR_MAX_STREAMS_PER_CLIENT", "many")])
+                .unwrap()
+                .max_streams_per_client,
+            16
+        );
+        assert_eq!(
+            config(&[("HDHR_MAX_STREAMS_PER_CLIENT", "-1")])
+                .unwrap()
+                .max_streams_per_client,
+            16
+        );
     }
 
     #[test]

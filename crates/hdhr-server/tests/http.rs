@@ -7,6 +7,7 @@ use std::fs;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use async_trait::async_trait;
 use axum::Router;
@@ -105,7 +106,9 @@ fn config(vars: &[(&str, &str)]) -> Config {
 fn app(mock: Mock, vars: &[(&str, &str)]) -> App {
     let mock = Arc::new(mock);
     let mut vars = vars.to_vec();
-    vars.push(("HDHR_RATE_LIMIT", "0"));
+    if !vars.iter().any(|(name, _)| *name == "HDHR_RATE_LIMIT") {
+        vars.push(("HDHR_RATE_LIMIT", "0"));
+    }
     let cloud = CloudClient::new(
         vars.iter()
             .find(|(k, _)| *k == "HDHR_CLOUD_DISCOVERY_URL")
@@ -627,4 +630,202 @@ async fn a_local_device_means_no_cloud_lookup() {
     let (_, body) = app.get("/api/v1/devices?force=true").await;
     assert_eq!(json_of(&body)[0]["id"], "10548B20");
     assert_eq!(hits.load(Ordering::SeqCst), 0);
+}
+
+// -------------------------------------------------------------------- streams
+
+const TUNED: &str = include_str!("../../hdhr-core/tests/fixtures/hardware-status-locked.txt");
+
+fn streaming_app(vars: &[(&str, &str)]) -> App {
+    app(
+        Mock::default()
+            .with("/tuner0/status", TUNED)
+            .with("/tuner1/status", TUNED),
+        vars,
+    )
+}
+
+async fn open(app: &App, path: &str) -> axum::response::Response {
+    app.router
+        .clone()
+        .oneshot(Request::get(path).body(Body::empty()).unwrap())
+        .await
+        .unwrap()
+}
+
+/// Reads the stream until `needle` has arrived, and returns everything read.
+async fn read_until(body: &mut Body, needle: &str) -> String {
+    let mut text = String::new();
+    while !text.contains(needle) {
+        let frame = tokio::time::timeout(Duration::from_secs(5), body.frame())
+            .await
+            .expect("timed out waiting for the stream");
+        let frame = frame.expect("the stream ended").expect("a frame");
+        if let Some(data) = frame.data_ref() {
+            text.push_str(&String::from_utf8_lossy(data));
+        }
+    }
+    text
+}
+
+#[tokio::test]
+async fn a_tuner_stream_is_server_sent_events() {
+    let app = streaming_app(&[]);
+    let response = open(&app, "/api/v1/devices/10.0.0.5/tuner/0/stream").await;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert!(
+        response.headers()[header::CONTENT_TYPE]
+            .to_str()
+            .unwrap()
+            .starts_with("text/event-stream")
+    );
+    assert!(
+        response.headers()[header::CACHE_CONTROL]
+            .to_str()
+            .unwrap()
+            .contains("no-cache")
+    );
+    assert_eq!(response.headers()["x-accel-buffering"], "no");
+
+    let mut body = response.into_body();
+    let text = read_until(&mut body, "event: tuner-status").await;
+    assert!(text.starts_with("retry: 1000"), "{text:?}");
+    let data = text
+        .lines()
+        .find_map(|line| line.strip_prefix("data: "))
+        .expect("a data line");
+    assert_eq!(json_of(data)["channel"], "auto:34");
+}
+
+#[tokio::test]
+async fn an_antenna_stream_covers_every_requested_tuner() {
+    let app = streaming_app(&[]);
+    let mut body = open(&app, "/api/v1/devices/10.0.0.5/antenna/stream?tuners=2")
+        .await
+        .into_body();
+    let text = read_until(&mut body, "event: antenna-mode-status").await;
+    let data = text
+        .lines()
+        .find_map(|line| line.strip_prefix("data: "))
+        .expect("a data line");
+    let readings = json_of(data);
+    assert_eq!(readings.as_array().unwrap().len(), 2);
+    assert_eq!(readings[1]["tuner"], 1);
+}
+
+#[tokio::test]
+async fn bad_stream_requests_are_refused_before_anything_is_polled() {
+    let app = streaming_app(&[]);
+    for path in [
+        "/api/v1/devices/-h/tuner/0/stream",
+        "/api/v1/devices/10.0.0.5/tuner/8/stream",
+        "/api/v1/devices/10.0.0.5/antenna/stream",
+        "/api/v1/devices/10.0.0.5/antenna/stream?tuners=0",
+        "/api/v1/devices/10.0.0.5/antenna/stream?tuners=9",
+        "/api/v1/devices/10.0.0.5/antenna/stream?tuners=1.5",
+        "/api/v1/devices/10.0.0.5/antenna/stream?tuners=x",
+        "/api/v1/devices/10.0.0.5/antenna/stream?tuners=2&tuners=3",
+    ] {
+        let response = open(&app, path).await;
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST, "{path}");
+    }
+    assert_eq!(app.state.hub.active(), 0);
+    assert_eq!(app.calls(), Vec::<String>::new());
+}
+
+#[tokio::test]
+async fn streams_are_not_counted_against_the_request_rate_limit() {
+    let app = streaming_app(&[("HDHR_RATE_LIMIT", "2")]);
+    for attempt in 0..6 {
+        let response = open(&app, "/api/v1/devices/10.0.0.5/tuner/0/stream").await;
+        assert_eq!(response.status(), StatusCode::OK, "connection {attempt}");
+    }
+    let statuses = [
+        app.get("/api/v1/version").await.0,
+        app.get("/api/v1/version").await.0,
+        app.get("/api/v1/version").await.0,
+    ];
+    assert!(
+        statuses.contains(&StatusCode::TOO_MANY_REQUESTS),
+        "{statuses:?}: ordinary requests are still limited"
+    );
+}
+
+#[tokio::test]
+async fn a_client_can_only_hold_so_many_streams_and_closing_one_frees_a_place() {
+    let app = streaming_app(&[("HDHR_MAX_STREAMS_PER_CLIENT", "2")]);
+    let a = open(&app, "/api/v1/devices/h/tuner/0/stream").await;
+    let b = open(&app, "/api/v1/devices/h/tuner/1/stream").await;
+    assert_eq!((a.status(), b.status()), (StatusCode::OK, StatusCode::OK));
+
+    let refused = open(&app, "/api/v1/devices/h/tuner/0/stream").await;
+    assert_eq!(refused.status(), StatusCode::TOO_MANY_REQUESTS);
+    let (_, _, body) = {
+        let (status, headers) = (refused.status(), refused.headers().clone());
+        (
+            status,
+            headers,
+            String::from_utf8_lossy(&refused.into_body().collect().await.unwrap().to_bytes())
+                .into_owned(),
+        )
+    };
+    assert_eq!(json_of(&body), json!({ "error": "Too many open streams" }));
+
+    drop(a);
+    let reopened = open(&app, "/api/v1/devices/h/tuner/0/stream").await;
+    assert_eq!(reopened.status(), StatusCode::OK);
+    drop(b);
+    drop(reopened);
+}
+
+#[tokio::test]
+async fn closing_a_stream_stops_its_poller() {
+    let app = streaming_app(&[]);
+    let first = open(&app, "/api/v1/devices/h/tuner/0/stream").await;
+    let second = open(&app, "/api/v1/devices/h/tuner/0/stream").await;
+    assert_eq!(app.state.hub.active(), 1, "two streams, one poller");
+    drop(first);
+    assert_eq!(app.state.hub.active(), 1);
+    drop(second);
+    assert_eq!(app.state.hub.active(), 0);
+}
+
+#[tokio::test]
+async fn shutting_down_ends_every_stream() {
+    let app = streaming_app(&[]);
+    let mut tuner = open(&app, "/api/v1/devices/h/tuner/0/stream")
+        .await
+        .into_body();
+    let mut antenna = open(&app, "/api/v1/devices/h/antenna/stream?tuners=2")
+        .await
+        .into_body();
+    read_until(&mut tuner, "event: tuner-status").await;
+    read_until(&mut antenna, "event: antenna-mode-status").await;
+
+    app.state.begin_shutdown();
+    for body in [&mut tuner, &mut antenna] {
+        // Anything already queued may still arrive, then the stream ends.
+        let ended = tokio::time::timeout(Duration::from_secs(5), async {
+            while let Some(frame) = body.frame().await {
+                frame.expect("a frame");
+            }
+        })
+        .await;
+        assert!(ended.is_ok(), "the stream did not end");
+    }
+    assert_eq!(app.state.hub.active(), 0);
+}
+
+#[tokio::test]
+async fn a_stream_opened_after_shutdown_began_ends_at_once() {
+    let app = streaming_app(&[]);
+    app.state.begin_shutdown();
+    let mut body = open(&app, "/api/v1/devices/h/tuner/0/stream")
+        .await
+        .into_body();
+    let ended = tokio::time::timeout(Duration::from_secs(5), async {
+        while body.frame().await.is_some() {}
+    })
+    .await;
+    assert!(ended.is_ok());
 }
