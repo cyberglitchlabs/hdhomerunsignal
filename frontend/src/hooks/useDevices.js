@@ -51,7 +51,7 @@ export function useDevices() {
     setSelectedDevice(deviceId);
 
     try {
-      const response = await axios.get(`/api/devices/${deviceId}/info`);
+      const response = await axios.get(`/api/v1/devices/${deviceId}/info`);
       console.log('Device info received:', response.data);
       if (isCurrent()) setDeviceInfo(response.data);
       return response.data;
@@ -64,7 +64,7 @@ export function useDevices() {
   const discoverDevices = async (force = false) => {
     setLoading(true);
     try {
-      const url = force ? '/api/devices?force=true' : '/api/devices';
+      const url = force ? '/api/v1/devices?force=true' : '/api/v1/devices';
       const response = await axios.get(url);
       setDevices(response.data);
       const chosen = chooseDevice(response.data, selectedRef.current);

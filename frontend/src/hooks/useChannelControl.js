@@ -75,7 +75,7 @@ export function useChannelControl({ selectedDevice, selectedTuner, region, chann
     if (!selectedDevice) return [];
 
     try {
-      const response = await axios.get(`/api/devices/${selectedDevice}/tuner/${selectedTuner}/programs`);
+      const response = await axios.get(`/api/v1/devices/${selectedDevice}/tuner/${selectedTuner}/programs`);
       if (!isCurrent()) return [];
       setCurrentChannelPrograms(response.data);
       return response.data;
@@ -101,7 +101,7 @@ export function useChannelControl({ selectedDevice, selectedTuner, region, chann
       clearAtsc3Info();
 
       // Use regular tuning - let backend auto-detect ATSC 3.0
-      await axios.post(`/api/devices/${selectedDevice}/tuner/${selectedTuner}/channel`, {
+      await axios.post(`/api/v1/devices/${selectedDevice}/tuner/${selectedTuner}/channel`, {
         channel
       });
       if (!isCurrent()) return;
@@ -120,7 +120,7 @@ export function useChannelControl({ selectedDevice, selectedTuner, region, chann
         await new Promise(resolve => setTimeout(resolve, 4000));
         if (!isCurrent()) return;
 
-        const response = await axios.get(`/api/devices/${selectedDevice}/tuner/${selectedTuner}/programs`);
+        const response = await axios.get(`/api/v1/devices/${selectedDevice}/tuner/${selectedTuner}/programs`);
         if (!isCurrent()) return;
         if (response.data.length > (firstResponse?.length || 0)) {
           setCurrentChannelPrograms(response.data);
@@ -160,7 +160,7 @@ export function useChannelControl({ selectedDevice, selectedTuner, region, chann
       // Clear all data immediately
       resetChannelData();
 
-      await axios.post(`/api/devices/${selectedDevice}/tuner/${selectedTuner}/clear`);
+      await axios.post(`/api/v1/devices/${selectedDevice}/tuner/${selectedTuner}/clear`);
     } catch (error) {
       console.error('Failed to clear tuner:', error);
     }

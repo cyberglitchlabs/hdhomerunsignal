@@ -12,7 +12,7 @@ describe('graceful shutdown', () => {
     test(`${signal} exits 0 quickly when idle`, async (t) => {
       const server = await startServer();
       t.after(() => server.stop());
-      assert.equal((await request(server.port, { path: '/api/version' })).status, 200);
+      assert.equal((await request(server.port, { path: '/api/v1/version' })).status, 200);
       const started = Date.now();
       server.proc.kill(signal);
       const { code } = await withTimeout(server.exited, 3000, 'shutdown');
@@ -26,8 +26,8 @@ describe('graceful shutdown', () => {
     const server = await startServer();
     t.after(() => server.stop());
 
-    const tuner = await openStream(server.port, '/api/devices/10.0.0.5/tuner/0/stream');
-    const antenna = await openStream(server.port, '/api/devices/10.0.0.5/antenna/stream?tuners=2');
+    const tuner = await openStream(server.port, '/api/v1/devices/10.0.0.5/tuner/0/stream');
+    const antenna = await openStream(server.port, '/api/v1/devices/10.0.0.5/antenna/stream?tuners=2');
     assert.equal(tuner.status, 200);
     assert.equal(antenna.status, 200);
     await sleep(200); // let the monitors start

@@ -50,7 +50,7 @@ function App() {
     if (Date.now() < dismissedUntil) return;
 
     try {
-      const response = await fetch('/api/version');
+      const response = await fetch('/api/v1/version');
       const data = await response.json();
 
       if (data.hash && data.hash !== 'unknown' && data.hash !== BUILD_HASH) {

@@ -1,5 +1,5 @@
 # The Rust version CI and local builds use, so a new release's lints cannot break
-# the build without a deliberate bump. Keep RUST_IMAGE in Dockerfile.rust on the
+# the build without a deliberate bump. Keep RUST_IMAGE in Dockerfile on the
 # same version.
 [toolchain]
 channel = "1.99.0"

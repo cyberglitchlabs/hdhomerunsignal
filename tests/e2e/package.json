@@ -1,0 +1,9 @@
+{
+  "name": "hdhomerun-signal-e2e",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Black-box tests that spawn hdhr-server and exercise its HTTP API",
+  "scripts": {
+    "test": "node --test"
+  }
+}

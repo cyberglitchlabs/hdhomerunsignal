@@ -1,4 +1,4 @@
 #ssh root@rock5b.local /mnt/usb/podman/crossbow/backup.sh --env=prod --retention=7
 #rsync -av --exclude=node_modules --exclude=.git nginx database frontend backend root@rock5b.local:/mnt/usb/podman/crossbow/
 apppath=/mnt/armbian/builds/hdhomerunsignal
-rsync -av --exclude=node_modules --exclude=version.json --exclude=.env.local --exclude=build --exclude=.git $apppath/frontend $apppath/backend $apppath/Dockerfile $apppath/docker-compose.yml /mnt/usb/podman/hdhomerun/
+rsync -av --exclude=node_modules --exclude=version.json --exclude=.env.local --exclude=build --exclude=.git $apppath/frontend $apppath/crates $apppath/Cargo.toml $apppath/Cargo.lock $apppath/rust-toolchain.toml $apppath/.dockerignore $apppath/Dockerfile $apppath/docker-compose.yml /mnt/usb/podman/hdhomerun/
