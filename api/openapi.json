@@ -1,0 +1,1641 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "HDHomeRun Signal API",
+    "description": "Control and watch HDHomeRun tuners.\n\n## Event streams\n\n`GET /devices/{id}/tuner/{tuner}/stream` and `GET /devices/{id}/antenna/stream` are [Server-Sent Events](https://html.spec.whatwg.org/multipage/server-sent-events.html), which OpenAPI cannot describe as a stream, so they are documented here. Open one with `EventSource`; closing the connection ends the subscription, and `EventSource` reconnects by itself.\n\n* The tuner stream sends a `tuner-status` event about once a second, whose data is a `TunerEvent`.\n* The antenna stream sends an `antenna-mode-status` event about once a second, whose data is an array of `AntennaReading`, one per tuner.\n* The first reading is sent as soon as the stream opens, and a comment line (`: keepalive`) every 15 seconds keeps idle proxies from closing it.\n* A client may hold a limited number of streams (`HDHR_MAX_STREAMS_PER_CLIENT`, 16 by default); beyond that the answer is 429, and `EventSource` does not retry after one.\n\n## Versioning\n\nEverything is under `/api/v1`. The unversioned `/api/...` paths of earlier releases, and their Socket.IO endpoint, no longer exist.",
+    "version": "1.0.0"
+  },
+  "paths": {
+    "/api/v1/devices": {
+      "get": {
+        "tags": [
+          "devices"
+        ],
+        "summary": "List devices",
+        "description": "The devices to offer. Found by local broadcast; if that finds nothing, by SiliconDust's cloud lookup (unless disabled); plus any devices configured by address. The cloud result is kept until a refresh.",
+        "operationId": "list_devices",
+        "parameters": [
+          {
+            "name": "force",
+            "in": "query",
+            "description": "`true` is the user pressing Refresh: it forgets remembered devices and allows the cloud lookup to run again. Any other value is ignored.",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The devices.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Device"
+                  }
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests from this client.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/devices/{id}/antenna/stream": {
+      "get": {
+        "tags": [
+          "streaming"
+        ],
+        "summary": "Watch every tuner of a device (event stream)",
+        "description": "Server-Sent Events for aiming an antenna: an `antenna-mode-status` event about once a second, whose data is an array of `AntennaReading`, one per tuner in order.",
+        "operationId": "antenna_stream",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "A device ID, IPv4 address or hostname.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "tuners",
+            "in": "query",
+            "description": "How many tuners to watch, 1 to 8 (plain digits).",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The stream; each event is named `antenna-mode-status`.",
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/AntennaReading"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A device or `tuners` is not valid.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "This client already holds the most streams it may.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/devices/{id}/info": {
+      "get": {
+        "tags": [
+          "devices"
+        ],
+        "summary": "Device model and tuner count",
+        "operationId": "device_info",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "A device ID (e.g. `1080ABCD`), IPv4 address or hostname: letters, digits, dots and hyphens, starting with a letter or digit, at most 253 characters.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The device. An unreachable one is reported as model `Unknown` with two tuners.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeviceInfo"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A device, tuner or parameter is not valid.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/devices/{id}/scan/{tuner}": {
+      "get": {
+        "tags": [
+          "tuners"
+        ],
+        "summary": "Scan for channels",
+        "description": "Scans a channel map on one tuner and returns the channels that locked, with their programs. This occupies the tuner and can take two minutes. Limited to 6 requests a minute per client.",
+        "operationId": "scan",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "A device ID (e.g. `1080ABCD`), IPv4 address or hostname: letters, digits, dots and hyphens, starting with a letter or digit, at most 253 characters.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "tuner",
+            "in": "path",
+            "description": "The tuner index, 0 to 7.",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "maximum": 7,
+              "minimum": 0
+            }
+          },
+          {
+            "name": "channelMap",
+            "in": "query",
+            "description": "One of `us-bcast` (the default), `us-cable`, `us-hrc`, `us-irc`, `ca-bcast`, `ca-cable`, `ca-hrc`, `ca-irc`, `eu-bcast`, `eu-cable`, `au-bcast`, `au-cable`. Giving it twice is an error.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The channels that locked.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ScannedChannel"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A device, tuner or parameter is not valid.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests from this client.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The device or the tool reported an error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/devices/{id}/stream/play.m3u": {
+      "get": {
+        "tags": [
+          "streaming"
+        ],
+        "summary": "M3U playlist for a program",
+        "description": "A one-entry playlist, sent as a download.",
+        "operationId": "playlist",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "A device ID (e.g. `1080ABCD`), IPv4 address or hostname: letters, digits, dots and hyphens, starting with a letter or digit, at most 253 characters.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "ch",
+            "in": "query",
+            "description": "The RF channel, as digits (1 to 10).",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "program",
+            "in": "query",
+            "description": "The program number, as digits (1 to 10).",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "name",
+            "in": "query",
+            "description": "A label for the entry; control characters are removed and it is cut at 64 characters.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The playlist.",
+            "content": {
+              "audio/x-mpegurl": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`ch` or `program` is missing or not digits.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The device is not on the list.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/devices/{id}/stream/url": {
+      "get": {
+        "tags": [
+          "streaming"
+        ],
+        "summary": "URL of a program",
+        "description": "The URL a player can open to watch one program, by RF channel and program number, which avoids two stations sharing a virtual channel. Only devices on the current device list are served.",
+        "operationId": "stream_url",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "A device ID (e.g. `1080ABCD`), IPv4 address or hostname: letters, digits, dots and hyphens, starting with a letter or digit, at most 253 characters.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "ch",
+            "in": "query",
+            "description": "The RF channel, as digits (1 to 10).",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "program",
+            "in": "query",
+            "description": "The program number, as digits (1 to 10).",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The URL.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StreamUrl"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`ch` or `program` is missing or not digits.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The device is not on the list.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/devices/{id}/tuner/{tuner}/atsc3": {
+      "post": {
+        "tags": [
+          "tuning"
+        ],
+        "summary": "Tune an ATSC 3.0 channel",
+        "description": "Builds `atsc3:<channel>[:<plp>+<plp>...]` from validated parts.",
+        "operationId": "set_atsc3",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "A device ID (e.g. `1080ABCD`), IPv4 address or hostname: letters, digits, dots and hyphens, starting with a letter or digit, at most 253 characters.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "tuner",
+            "in": "path",
+            "description": "The tuner index, 0 to 7.",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "maximum": 7,
+              "minimum": 0
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Atsc3Request"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Tuned.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TuneResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The channel or the PLPs are not valid.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The device or the tool reported an error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/devices/{id}/tuner/{tuner}/channel": {
+      "post": {
+        "tags": [
+          "tuning"
+        ],
+        "summary": "Tune a channel",
+        "operationId": "set_channel",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "A device ID (e.g. `1080ABCD`), IPv4 address or hostname: letters, digits, dots and hyphens, starting with a letter or digit, at most 253 characters.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "tuner",
+            "in": "path",
+            "description": "The tuner index, 0 to 7.",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "maximum": 7,
+              "minimum": 0
+            }
+          }
+        ],
+        "requestBody": {
+          "description": "The channel must be a string; a JSON number is refused here (but accepted by the `atsc3` endpoint).",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ChannelRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Tuned.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TuneResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A device, tuner or parameter is not valid.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The device or the tool reported an error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/devices/{id}/tuner/{tuner}/channel/down": {
+      "post": {
+        "tags": [
+          "tuning"
+        ],
+        "summary": "Previous channel",
+        "operationId": "channel_down",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "A device ID (e.g. `1080ABCD`), IPv4 address or hostname: letters, digits, dots and hyphens, starting with a letter or digit, at most 253 characters.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "tuner",
+            "in": "path",
+            "description": "The tuner index, 0 to 7.",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "maximum": 7,
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Tuned.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TuneResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A device, tuner or parameter is not valid.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The device or the tool reported an error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/devices/{id}/tuner/{tuner}/channel/up": {
+      "post": {
+        "tags": [
+          "tuning"
+        ],
+        "summary": "Next channel",
+        "operationId": "channel_up",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "A device ID (e.g. `1080ABCD`), IPv4 address or hostname: letters, digits, dots and hyphens, starting with a letter or digit, at most 253 characters.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "tuner",
+            "in": "path",
+            "description": "The tuner index, 0 to 7.",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "maximum": 7,
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Tuned.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TuneResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A device, tuner or parameter is not valid.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The device or the tool reported an error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/devices/{id}/tuner/{tuner}/clear": {
+      "post": {
+        "tags": [
+          "tuning"
+        ],
+        "summary": "Stop the tuner",
+        "operationId": "clear_tuner",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "A device ID (e.g. `1080ABCD`), IPv4 address or hostname: letters, digits, dots and hyphens, starting with a letter or digit, at most 253 characters.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "tuner",
+            "in": "path",
+            "description": "The tuner index, 0 to 7.",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "maximum": 7,
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Cleared.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TuneResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A device, tuner or parameter is not valid.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The device or the tool reported an error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/devices/{id}/tuner/{tuner}/l1info": {
+      "get": {
+        "tags": [
+          "tuners"
+        ],
+        "summary": "ATSC 3.0 L1 signalling",
+        "operationId": "l1_info",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "A device ID (e.g. `1080ABCD`), IPv4 address or hostname: letters, digits, dots and hyphens, starting with a letter or digit, at most 253 characters.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "tuner",
+            "in": "path",
+            "description": "The tuner index, 0 to 7.",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "maximum": 7,
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The raw key/value pairs, or null when the device reports none.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": [
+                    "object",
+                    "null"
+                  ],
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "propertyNames": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A device, tuner or parameter is not valid.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/devices/{id}/tuner/{tuner}/plpinfo": {
+      "get": {
+        "tags": [
+          "tuners"
+        ],
+        "summary": "ATSC 3.0 PLP details",
+        "operationId": "plp_info",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "A device ID (e.g. `1080ABCD`), IPv4 address or hostname: letters, digits, dots and hyphens, starting with a letter or digit, at most 253 characters.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "tuner",
+            "in": "path",
+            "description": "The tuner index, 0 to 7.",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "maximum": 7,
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The PLPs by id, or null when the device reports none or has no ATSC 3.0 support.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": [
+                    "object",
+                    "null"
+                  ],
+                  "additionalProperties": {
+                    "$ref": "#/components/schemas/PlpInfo"
+                  },
+                  "propertyNames": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A device, tuner or parameter is not valid.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/devices/{id}/tuner/{tuner}/programs": {
+      "get": {
+        "tags": [
+          "tuners"
+        ],
+        "summary": "Programs on the tuned channel",
+        "description": "Empty unless the tuner has a lock. Right after a channel change the device can need a few seconds, so this retries for up to about 7 seconds.",
+        "operationId": "programs",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "A device ID (e.g. `1080ABCD`), IPv4 address or hostname: letters, digits, dots and hyphens, starting with a letter or digit, at most 253 characters.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "tuner",
+            "in": "path",
+            "description": "The tuner index, 0 to 7.",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "maximum": 7,
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The programs.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Program"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A device, tuner or parameter is not valid.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/devices/{id}/tuner/{tuner}/status": {
+      "get": {
+        "tags": [
+          "tuners"
+        ],
+        "summary": "Tuner status",
+        "operationId": "tuner_status",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "A device ID (e.g. `1080ABCD`), IPv4 address or hostname: letters, digits, dots and hyphens, starting with a letter or digit, at most 253 characters.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "tuner",
+            "in": "path",
+            "description": "The tuner index, 0 to 7.",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "maximum": 7,
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "One reading, or null when the tuner did not answer.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "$ref": "#/components/schemas/TunerStatus"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A device, tuner or parameter is not valid.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/devices/{id}/tuner/{tuner}/stream": {
+      "get": {
+        "tags": [
+          "streaming"
+        ],
+        "summary": "Watch a tuner (event stream)",
+        "description": "Server-Sent Events: a `tuner-status` event about once a second, whose data is a `TunerEvent`. See the notes on event streams in the API description.",
+        "operationId": "tuner_stream",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "A device ID, IPv4 address or hostname.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "tuner",
+            "in": "path",
+            "description": "The tuner index, 0 to 7.",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "maximum": 7,
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The stream; each event is named `tuner-status`.",
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "$ref": "#/components/schemas/TunerEvent"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A device or tuner is not valid.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "This client already holds the most streams it may.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/version": {
+      "get": {
+        "tags": [
+          "app"
+        ],
+        "summary": "Frontend build version",
+        "description": "Read by the page to find out whether a newer build is available.",
+        "operationId": "version",
+        "responses": {
+          "200": {
+            "description": "The build.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Version"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "AntennaReading": {
+        "type": "object",
+        "description": "One tuner's reading inside an `antenna-mode-status` event.",
+        "required": [
+          "tuner"
+        ],
+        "properties": {
+          "status": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/TunerStatus",
+                "description": "Null when that tuner did not answer."
+              }
+            ]
+          },
+          "tuner": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          }
+        }
+      },
+      "Atsc3Request": {
+        "type": "object",
+        "description": "The body of `POST .../atsc3`.",
+        "required": [
+          "channel"
+        ],
+        "properties": {
+          "channel": {
+            "type": "string",
+            "description": "The RF channel, as digits. A JSON number is accepted too.",
+            "example": "27",
+            "pattern": "^[0-9]{1,10}$"
+          },
+          "plps": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            },
+            "description": "The PLPs to decode, 0 to 255 each (up to 64). Each may also be a string of digits."
+          }
+        }
+      },
+      "ChannelRequest": {
+        "type": "object",
+        "description": "The body of `POST .../channel`.",
+        "required": [
+          "channel"
+        ],
+        "properties": {
+          "channel": {
+            "type": "string",
+            "description": "What to tune: `27`, `auto:27`, `8vsb:27`, `qam256:117`, `auto:575000000`,\n`atsc3:27`, `atsc3:27:0+1+2`, or the special values `none` (stop), `+` and `-`\n(next and previous channel).",
+            "example": "auto:27",
+            "pattern": "^(?:[a-z0-9]{2,10}:)?[0-9]{1,10}(?::[0-9]{1,3}(?:\\+[0-9]{1,3})*)?$|^(?:none|\\+|-)$"
+          }
+        }
+      },
+      "Device": {
+        "type": "object",
+        "description": "A tuner device the user can pick.",
+        "required": [
+          "id",
+          "ip",
+          "name",
+          "online"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "What commands address the device by: a device ID, IP address or hostname."
+          },
+          "ip": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "online": {
+            "type": "boolean"
+          }
+        }
+      },
+      "DeviceInfo": {
+        "type": "object",
+        "description": "Model and capabilities of one device.",
+        "required": [
+          "model",
+          "tuners",
+          "atsc3Support"
+        ],
+        "properties": {
+          "atsc3Support": {
+            "type": "boolean"
+          },
+          "model": {
+            "type": "string"
+          },
+          "tuners": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          }
+        }
+      },
+      "ErrorBody": {
+        "type": "object",
+        "description": "The body of every error response.",
+        "required": [
+          "error"
+        ],
+        "properties": {
+          "error": {
+            "type": "string",
+            "description": "What went wrong, in words."
+          }
+        }
+      },
+      "PlpInfo": {
+        "type": "object",
+        "description": "One ATSC 3.0 physical layer pipe, from `/tuner<n>/plpinfo`.",
+        "properties": {
+          "coderate": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "layer": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "lls": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "lock": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "modulation": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "sfi": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "timeInterleaving": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "Program": {
+        "type": "object",
+        "description": "One program (virtual channel) on the tuned channel.",
+        "required": [
+          "programNum",
+          "virtualChannel",
+          "name",
+          "callsign",
+          "status",
+          "encrypted",
+          "atsc3"
+        ],
+        "properties": {
+          "atsc3": {
+            "type": "boolean"
+          },
+          "callsign": {
+            "type": "string",
+            "description": "Same as `name`; kept for clients that read it."
+          },
+          "encrypted": {
+            "type": "boolean"
+          },
+          "name": {
+            "type": "string"
+          },
+          "programNum": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "description": "The parenthesised note after the name, e.g. `encrypted` or `atsc3`."
+          },
+          "virtualChannel": {
+            "type": "string"
+          }
+        }
+      },
+      "ScanProgram": {
+        "type": "object",
+        "description": "A program found during a channel scan.",
+        "required": [
+          "programNum",
+          "virtualChannel",
+          "name"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "programNum": {
+            "type": "string"
+          },
+          "virtualChannel": {
+            "type": "string"
+          }
+        }
+      },
+      "ScannedChannel": {
+        "type": "object",
+        "description": "A frequency that locked during a channel scan.",
+        "required": [
+          "frequency",
+          "channel",
+          "modulation",
+          "signalStrength",
+          "snr",
+          "symbolQuality",
+          "programs"
+        ],
+        "properties": {
+          "channel": {
+            "type": "string"
+          },
+          "frequency": {
+            "type": "string"
+          },
+          "modulation": {
+            "type": "string"
+          },
+          "programs": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ScanProgram"
+            }
+          },
+          "signalStrength": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "snr": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "symbolQuality": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          }
+        }
+      },
+      "StreamUrl": {
+        "type": "object",
+        "description": "A URL a player can open.",
+        "required": [
+          "url"
+        ],
+        "properties": {
+          "url": {
+            "type": "string",
+            "example": "http://192.168.1.50:5004/auto/ch34-3"
+          }
+        }
+      },
+      "TuneResult": {
+        "type": "object",
+        "description": "The answer to a tuning command.",
+        "required": [
+          "success",
+          "result"
+        ],
+        "properties": {
+          "result": {
+            "type": "string",
+            "description": "What the device answered, usually empty."
+          },
+          "success": {
+            "type": "boolean"
+          }
+        }
+      },
+      "TunerEvent": {
+        "type": "object",
+        "description": "The payload of a `tuner-status` event: the tuner's status, plus the current\nprogram and the ATSC 3.0 details.\n\nA tuner that does not answer still produces an event, with none of the status\nfields (no `channel`, no `lock`), so a page can tell the device is not\nreporting. `plpInfo` and `l1Info` are only fetched while a channel is tuned.",
+        "required": [
+          "currentProgram",
+          "plpInfo",
+          "l1Info"
+        ],
+        "properties": {
+          "bps": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Stream bitrate in bits per second.",
+            "minimum": 0
+          },
+          "channel": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The tuned channel as the device reports it, e.g. `auto:34`, or `none`."
+          },
+          "currentProgram": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The selected program number, as the device reports it, or null."
+          },
+          "debugRaw": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The debug counters the dB estimates came from."
+          },
+          "l1Info": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "description": "ATSC 3.0 L1 signalling as raw key/value pairs, or null.",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "lock": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Whether the tuner has a lock on the signal."
+          },
+          "plpInfo": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "description": "ATSC 3.0 PLPs by id, or null when the device reports none.",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/PlpInfo"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "pps": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Packets per second.",
+            "minimum": 0
+          },
+          "seq": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Symbol error quality, percent.",
+            "minimum": 0
+          },
+          "snq": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Signal-to-noise quality, percent.",
+            "minimum": 0
+          },
+          "snrDb": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Signal-to-noise estimated in dB, when the device reports the counters for it."
+          },
+          "ss": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Signal strength, percent.",
+            "minimum": 0
+          },
+          "ssDb": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Signal strength estimated in dBm, when the device reports the counters for it."
+          }
+        }
+      },
+      "TunerStatus": {
+        "type": "object",
+        "description": "One reading of `/tuner<n>/status`.",
+        "required": [
+          "lock"
+        ],
+        "properties": {
+          "bps": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Stream bitrate in bits per second.",
+            "minimum": 0
+          },
+          "channel": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The tuned channel as the device reports it, e.g. `8vsb:27`, or `none`."
+          },
+          "debugRaw": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The debug counters the dB estimates came from, as `signal-snr/third`."
+          },
+          "lock": {
+            "type": "boolean"
+          },
+          "pps": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Packets per second.",
+            "minimum": 0
+          },
+          "seq": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Symbol error quality, percent.",
+            "minimum": 0
+          },
+          "snq": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Signal-to-noise quality, percent.",
+            "minimum": 0
+          },
+          "snrDb": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Signal-to-noise estimated in dB from the debug counters."
+          },
+          "ss": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Signal strength, percent.",
+            "minimum": 0
+          },
+          "ssDb": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Signal strength estimated in dBm from the debug counters."
+          }
+        }
+      },
+      "Version": {
+        "type": "object",
+        "description": "What the built frontend says about itself.",
+        "required": [
+          "hash"
+        ],
+        "properties": {
+          "buildTime": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "When it was built (ISO 8601), or null when unknown."
+          },
+          "hash": {
+            "type": "string",
+            "description": "A hash of the build, or `unknown` when there is no build information."
+          }
+        }
+      }
+    }
+  },
+  "tags": [
+    {
+      "name": "devices",
+      "description": "Finding devices."
+    },
+    {
+      "name": "tuners",
+      "description": "Reading a tuner."
+    },
+    {
+      "name": "tuning",
+      "description": "Changing what a tuner is tuned to."
+    },
+    {
+      "name": "streaming",
+      "description": "Watching a program and the live event streams."
+    },
+    {
+      "name": "app",
+      "description": "The frontend."
+    }
+  ]
+}

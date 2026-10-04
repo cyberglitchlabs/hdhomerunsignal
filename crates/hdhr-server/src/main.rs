@@ -16,6 +16,13 @@ const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
 
 #[tokio::main]
 async fn main() -> ExitCode {
+    // `--openapi` prints the API description and exits, which is how the committed
+    // copy in `api/openapi.json` is regenerated and checked.
+    if std::env::args().nth(1).as_deref() == Some("--openapi") {
+        print!("{}", hdhr_server::openapi::spec_json());
+        return ExitCode::SUCCESS;
+    }
+
     // Logs go to stdout without colour, one line each, like the Node server's.
     tracing_subscriber::fmt()
         .with_ansi(false)

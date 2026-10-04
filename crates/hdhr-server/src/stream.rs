@@ -22,6 +22,7 @@ use tokio_stream::wrappers::WatchStream;
 use crate::error::ApiError;
 use crate::hub::{Key, Subscription};
 use crate::routes::{ApiResult, Query, client_key, device, tuner};
+use crate::schema::{AntennaReading, ErrorBody, TunerEvent};
 use crate::state::{AppState, StreamSlot};
 
 /// Idle proxies close a connection that stays quiet; a comment line every so often
@@ -50,6 +51,19 @@ impl<S: Stream> Stream for Guarded<S> {
     }
 }
 
+#[utoipa::path(
+    get,
+    path = "/devices/{id}/tuner/{tuner}/stream",
+    tag = "streaming",
+    summary = "Watch a tuner (event stream)",
+    description = "Server-Sent Events: a `tuner-status` event about once a second, whose data is a `TunerEvent`. See the notes on event streams in the API description.",
+    params(("id" = String, Path, description = "A device ID, IPv4 address or hostname."), ("tuner" = u8, Path, description = "The tuner index, 0 to 7.", minimum = 0, maximum = 7)),
+    responses(
+        (status = 200, description = "The stream; each event is named `tuner-status`.", content_type = "text/event-stream", body = TunerEvent),
+        (status = 400, description = "A device or tuner is not valid.", body = ErrorBody),
+        (status = 429, description = "This client already holds the most streams it may.", body = ErrorBody)
+    )
+)]
 pub async fn tuner_stream(
     State(state): State<Arc<AppState>>,
     Path((id, tuner_text)): Path<(String, String)>,
@@ -66,6 +80,19 @@ pub async fn tuner_stream(
     )
 }
 
+#[utoipa::path(
+    get,
+    path = "/devices/{id}/antenna/stream",
+    tag = "streaming",
+    summary = "Watch every tuner of a device (event stream)",
+    description = "Server-Sent Events for aiming an antenna: an `antenna-mode-status` event about once a second, whose data is an array of `AntennaReading`, one per tuner in order.",
+    params(("id" = String, Path, description = "A device ID, IPv4 address or hostname."), ("tuners" = u8, Query, description = "How many tuners to watch, 1 to 8 (plain digits).")),
+    responses(
+        (status = 200, description = "The stream; each event is named `antenna-mode-status`.", content_type = "text/event-stream", body = Vec<AntennaReading>),
+        (status = 400, description = "A device or `tuners` is not valid.", body = ErrorBody),
+        (status = 429, description = "This client already holds the most streams it may.", body = ErrorBody)
+    )
+)]
 pub async fn antenna_stream(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
