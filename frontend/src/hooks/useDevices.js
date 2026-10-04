@@ -11,6 +11,9 @@ export function chooseDevice(devices, currentId) {
   return online.find(d => d.id === currentId) || online[0] || null;
 }
 
+// Tuner count assumed when a device's info cannot be loaded
+export const FALLBACK_DEVICE_INFO = { tuners: 2 };
+
 /** The tuner to use on a device: the current one, or the last one if it doesn't have that many. */
 export function clampTuner(tuner, deviceInfo) {
   if (deviceInfo && tuner >= deviceInfo.tuners) return Math.max(deviceInfo.tuners - 1, 0);
@@ -26,6 +29,8 @@ export function useDevices() {
   const [devices, setDevices] = useState([]);
   const [selectedDevice, setSelectedDevice] = useState('');
   const [deviceInfo, setDeviceInfo] = useState(null);
+  // True when the info request failed and deviceInfo is the fallback
+  const [infoError, setInfoError] = useState(false);
   const [loading, setLoading] = useState(false);
   // The selection as discoverDevices sees it, even before React re-renders
   const selectedRef = useRef('');
@@ -36,6 +41,7 @@ export function useDevices() {
     selectedRef.current = '';
     setSelectedDevice('');
     setDeviceInfo(null);
+    setInfoError(false);
   };
 
   // Switch to a device and load its info. Only the latest request's info is
@@ -47,6 +53,7 @@ export function useDevices() {
       // The old device's info does not describe the new one
       setDeviceInfo(null);
     }
+    setInfoError(false);
     selectedRef.current = deviceId;
     setSelectedDevice(deviceId);
 
@@ -57,9 +64,16 @@ export function useDevices() {
       return response.data;
     } catch (error) {
       console.error('Failed to get device info:', error);
+      if (isCurrent()) {
+        // Monitoring waits for the info, so give it a tuner count to go on
+        setDeviceInfo(FALLBACK_DEVICE_INFO);
+        setInfoError(true);
+      }
       return null;
     }
   };
+
+  const retryDeviceInfo = () => (selectedRef.current ? selectDevice(selectedRef.current) : Promise.resolve(null));
 
   const discoverDevices = async (force = false) => {
     setLoading(true);
@@ -85,5 +99,7 @@ export function useDevices() {
     discoverDevices();
   }, []);
 
-  return { devices, selectedDevice, selectDevice, deviceInfo, loading, discoverDevices };
+  return {
+    devices, selectedDevice, selectDevice, deviceInfo, infoError, retryDeviceInfo, loading, discoverDevices
+  };
 }
