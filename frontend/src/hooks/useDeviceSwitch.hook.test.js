@@ -1,9 +1,11 @@
 // @vitest-environment jsdom
 import { renderHook, act, waitFor } from '@testing-library/react';
 import axios from 'axios';
-import { useDevices, FALLBACK_DEVICE_INFO, INFO_TIMEOUT_MS } from './useDevices';
+import { useChannelControl } from './useChannelControl';
+import { useDevices, deviceInUse, FALLBACK_DEVICE_INFO, INFO_TIMEOUT_MS } from './useDevices';
 import { useEventStream } from './useEventStream';
 import { useSelectedTuner } from './useSelectedTuner';
+import { useTunerState } from './useTunerState';
 
 vi.mock('axios');
 
@@ -214,5 +216,66 @@ describe('the info request timeout', () => {
     const { result } = renderHook(() => useDevices());
     await waitFor(() => expect(result.current.deviceInfo).toEqual(FALLBACK_DEVICE_INFO));
     expect(result.current.infoError).toBe(true);
+  });
+});
+
+describe('deviceInUse', () => {
+  test('is the selected device once its info is known, and none while it loads', () => {
+    expect(deviceInUse('B', { tuners: 2 })).toBe('B');
+    expect(deviceInUse('B', FALLBACK_DEVICE_INFO)).toBe('B');
+    expect(deviceInUse('B', null)).toBe('');
+    expect(deviceInUse('', { tuners: 2 })).toBe('');
+  });
+});
+
+describe('while a new device\'s info loads', () => {
+  // The hooks wired as SignalMeter wires them
+  function useWired({ selectedDevice, info }) {
+    const [tuner, setTuner] = useSelectedTuner(info);
+    const device = deviceInUse(selectedDevice, info);
+    const state = useTunerState(`${device}/${tuner}`);
+    const control = useChannelControl({
+      selectedDevice: device, selectedTuner: tuner, region: 'us', channelMap: 'us-bcast',
+      tunerStatus: state.tunerStatus, clearAtsc3Info: state.clearAtsc3Info
+    });
+    return { tuner, setTuner, ...control };
+  }
+
+  beforeEach(() => {
+    axios.get.mockResolvedValue({ data: [] });
+    axios.post.mockResolvedValue({ data: {} });
+  });
+
+  test('tune, step and stop do nothing, so nothing is sent for a tuner the device may lack', async () => {
+    const { result, rerender } = renderHook((p) => useWired(p), {
+      initialProps: { selectedDevice: 'A', info: { tuners: 4 } }
+    });
+    act(() => result.current.setTuner(3));
+    axios.post.mockClear();
+    axios.get.mockClear();
+
+    rerender({ selectedDevice: 'B', info: null });
+    await act(async () => {
+      await result.current.tuneToDirectChannel('27');
+      await result.current.incrementChannel();
+      await result.current.clearTuner();
+    });
+
+    expect(axios.post).not.toHaveBeenCalled();
+    expect(axios.get).not.toHaveBeenCalled();
+  });
+
+  test('once the info arrives, requests go to a tuner the device has', async () => {
+    const { result, rerender } = renderHook((p) => useWired(p), {
+      initialProps: { selectedDevice: 'A', info: { tuners: 4 } }
+    });
+    act(() => result.current.setTuner(3));
+    rerender({ selectedDevice: 'B', info: null });
+    rerender({ selectedDevice: 'B', info: { tuners: 2 } });
+    axios.post.mockClear();
+
+    await act(() => result.current.tuneToDirectChannel('27'));
+
+    expect(axios.post).toHaveBeenCalledWith('/api/v1/devices/B/tuner/1/channel', { channel: '27' });
   });
 });

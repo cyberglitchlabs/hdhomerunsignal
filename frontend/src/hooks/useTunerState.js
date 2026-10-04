@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 // ATSC 3.0 is detected from the presence of PLP data in the status.
 export function deriveAtsc3State(status) {
@@ -9,42 +9,49 @@ export function deriveAtsc3State(status) {
   };
 }
 
+// Nothing received yet for the current source
+const EMPTY = { source: undefined, status: null, plpInfo: null, l1Info: null, isAtsc3Channel: false };
+
 /**
  * The live tuner status pushed over the event stream, plus the ATSC 3.0 details
  * (PLP and L1 info) that come with it.
  *
- * `source` identifies what the stream is for (the device and tuner). When it
- * changes the status is dropped, so the new tuner's first reading always counts
- * as a change, even when it matches the old tuner's channel and lock.
+ * `source` identifies what the stream is for (the device and tuner). Readings are
+ * stored with the source they arrived for, and only the current source's are
+ * returned, so no render after a switch shows the previous tuner's reading, and
+ * the new tuner's first reading always counts as a change, even when it matches
+ * the old tuner's channel and lock.
  */
 export function useTunerState(source) {
-  const [tunerStatus, setTunerStatus] = useState(null);
-  const [plpInfo, setPlpInfo] = useState(null);
-  const [l1Info, setL1Info] = useState(null);
-  const [isAtsc3Channel, setIsAtsc3Channel] = useState(false);
+  const [state, setState] = useState(EMPTY);
+  // The source new readings belong to. Updated in an effect that runs before the
+  // stream for the new source subscribes, so no reading is tagged with the old one.
+  const sourceRef = useRef(source);
 
+  // Also forget what was stored, so returning to an earlier source does not bring
+  // its old reading back
   useEffect(() => {
-    setTunerStatus(null);
-    setPlpInfo(null);
-    setL1Info(null);
-    setIsAtsc3Channel(false);
+    sourceRef.current = source;
+    setState(EMPTY);
   }, [source]);
 
   // Feed this each 'tuner-status' event.
   const handleTunerStatus = useCallback((status) => {
-    setTunerStatus(status);
-    const atsc3 = deriveAtsc3State(status);
-    setIsAtsc3Channel(atsc3.isAtsc3Channel);
-    setPlpInfo(atsc3.plpInfo);
-    setL1Info(atsc3.l1Info);
+    setState({ source: sourceRef.current, status, ...deriveAtsc3State(status) });
   }, []);
 
   // Drop the ATSC 3.0 details, e.g. when the channel or tuner changes.
   const clearAtsc3Info = useCallback(() => {
-    setPlpInfo(null);
-    setL1Info(null);
-    setIsAtsc3Channel(false);
+    setState((prev) => ({ ...prev, plpInfo: null, l1Info: null, isAtsc3Channel: false }));
   }, []);
 
-  return { tunerStatus, plpInfo, l1Info, isAtsc3Channel, handleTunerStatus, clearAtsc3Info };
+  const current = state.source === source ? state : EMPTY;
+  return {
+    tunerStatus: current.status,
+    plpInfo: current.plpInfo,
+    l1Info: current.l1Info,
+    isAtsc3Channel: current.isAtsc3Channel,
+    handleTunerStatus,
+    clearAtsc3Info
+  };
 }

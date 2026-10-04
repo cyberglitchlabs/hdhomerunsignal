@@ -19,6 +19,15 @@ export const FALLBACK_DEVICE_INFO = { tuners: 2, assumed: true };
 // must become the fallback in bounded time.
 export const INFO_TIMEOUT_MS = 5000;
 
+/**
+ * The device everything downstream should act on: the selected one once its info
+ * is known, none while it loads. Until then nothing can say which tuners it has,
+ * so no stream is opened and no request is sent for it.
+ */
+export function deviceInUse(selectedDevice, deviceInfo) {
+  return deviceInfo ? selectedDevice : '';
+}
+
 /** The tuner to use on a device: the current one, or the last one if it doesn't have that many. */
 export function clampTuner(tuner, deviceInfo) {
   if (deviceInfo && tuner >= deviceInfo.tuners) return Math.max(deviceInfo.tuners - 1, 0);
