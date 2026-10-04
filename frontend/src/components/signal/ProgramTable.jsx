@@ -17,9 +17,9 @@ import { streamUrl } from '../../utils/streamUrl';
 
 // The programs on the tuned channel. Watch opens the stream in the user's
 // player; right-clicking it asks onContextMenu({ mouseX, mouseY, program }).
-export default function ProgramTable({ programs, tunerStatus, region, selectedDevice, onContextMenu }) {
+export default function ProgramTable({ programs, tunerStatus, region, channelMap, selectedDevice, onContextMenu }) {
   const watch = (program) => {
-    const freq = streamFrequency(tunerStatus?.channel, region);
+    const freq = streamFrequency(tunerStatus?.channel, region, channelMap);
     if (!freq) return;
     const channelName = `${program.callsign} ${program.virtualChannel}`;
     window.location.href = streamUrl(selectedDevice, 'play.m3u', {

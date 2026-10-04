@@ -87,7 +87,7 @@ function SignalMeter() {
         {/* Antenna Tuning Mode */}
         {antennaMode && selectedDevice && (
           <Grid item xs={12}>
-            <AntennaMode allTunersData={allTunersData} region={region} />
+            <AntennaMode allTunersData={allTunersData} region={region} channelMap={channelMap} />
           </Grid>
         )}
 
@@ -128,6 +128,7 @@ function SignalMeter() {
             programs={currentChannelPrograms}
             tunerStatus={tunerStatus}
             region={region}
+            channelMap={channelMap}
             selectedDevice={selectedDevice}
             onContextMenu={setContextMenu}
           />
@@ -139,6 +140,7 @@ function SignalMeter() {
         onClose={() => setContextMenu(null)}
         tunerStatus={tunerStatus}
         region={region}
+        channelMap={channelMap}
         selectedDevice={selectedDevice}
       />
     </Box>

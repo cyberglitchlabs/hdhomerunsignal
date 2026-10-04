@@ -196,3 +196,92 @@ describe('stepChannel', () => {
     expect(stepChannel('abc', 1, us)).toBe(3);
   });
 });
+
+// Expected values come from libhdhomerun's hdhomerun_channels.c
+describe('cable, HRC and IRC channel maps', () => {
+  test('US cable: channels at their table frequencies', () => {
+    expect(frequencyToChannel(57e6, 'us', 'us-cable')).toBe(2);
+    expect(frequencyToChannel(123e6, 'us', 'us-cable')).toBe(14);
+    expect(frequencyToChannel(243e6, 'us', 'us-cable')).toBe(27);
+    expect(frequencyToChannel(93e6, 'us', 'us-cable')).toBe(95);
+    expect(frequencyToChannel(651e6, 'us', 'us-cable')).toBe(100);
+    expect(frequencyToChannel(999e6, 'us', 'us-cable')).toBe(158);
+    expect(frequencyToChannel(1005e6, 'us', 'us-cable')).toBeNull();
+  });
+
+  test('the same frequency is a different channel on a cable map than on broadcast', () => {
+    expect(frequencyToChannel(213e6, 'us', 'us-bcast')).toBe(13);
+    expect(frequencyToChannel(243e6, 'us', 'us-cable')).toBe(27);
+    expect(frequencyToChannel(243e6, 'us')).toBeNull(); // no broadcast channel there
+  });
+
+  test('HRC and IRC channels sit at offset frequencies', () => {
+    expect(frequencyToChannel(217760800, 'us', 'us-hrc')).toBe(23);
+    expect(frequencyToChannel(55752700, 'us', 'us-hrc')).toBe(2);
+    expect(frequencyToChannel(333025000, 'us', 'us-irc')).toBe(42);
+    expect(frequencyToChannel(339012500, 'us', 'us-irc')).toBe(43);
+    expect(frequencyToChannel(111025000, 'us', 'us-irc')).toBe(98);
+  });
+
+  test('a frequency in a gap of the plan is not placed', () => {
+    expect(frequencyToChannel(74e6, 'us', 'us-cable')).toBeNull(); // between channels 4 and 5
+    expect(frequencyToChannel(40e6, 'us', 'us-cable')).toBeNull();
+  });
+
+  test('EU and AU cable use the frequency in MHz as the channel number', () => {
+    expect(frequencyToChannel(108e6, 'eu', 'eu-cable')).toBe(108);
+    expect(frequencyToChannel(450e6, 'eu', 'eu-cable')).toBe(450);
+    expect(frequencyToChannel(450e6, 'au', 'au-cable')).toBe(450);
+    expect(frequencyToChannel(862e6, 'au', 'au-cable')).toBe(862);
+    expect(frequencyToChannel(900e6, 'eu', 'eu-cable')).toBeNull();
+  });
+
+  test('Canadian maps use the US tables', () => {
+    expect(frequencyToChannel(243e6, 'ca', 'ca-cable')).toBe(27);
+    expect(frequencyToChannel(217760800, 'ca', 'ca-hrc')).toBe(23);
+  });
+
+  test('a broadcast map or none behaves as before', () => {
+    expect(frequencyToChannel(213e6, 'us', 'us-bcast')).toBe(13);
+    expect(frequencyToChannel(213e6, 'us', '')).toBe(13);
+    expect(frequencyToChannel(213e6, 'us', undefined)).toBe(13);
+  });
+
+  test('channelToFrequency is the inverse on cable maps', () => {
+    expect(channelToFrequency('27', 'us', 'us-cable')).toBe(243e6);
+    expect(channelToFrequency('100', 'us', 'us-cable')).toBe(651e6);
+    expect(channelToFrequency('23', 'us', 'us-hrc')).toBe(217760800);
+    expect(channelToFrequency('42', 'us', 'us-irc')).toBe(333025000);
+    expect(channelToFrequency('450', 'eu', 'eu-cable')).toBe(450e6);
+    expect(channelToFrequency('159', 'us', 'us-cable')).toBeNull();
+    expect(channelToFrequency('27', 'us', 'us-bcast')).toBe(551e6);
+  });
+
+  test('every cable-map channel round-trips', () => {
+    for (const map of ['us-cable', 'us-hrc', 'us-irc', 'ca-cable']) {
+      for (let ch = 2; ch <= 158; ch++) {
+        const freq = channelToFrequency(String(ch), 'us', map);
+        if (freq !== null) expect(frequencyToChannel(freq, 'us', map)).toBe(ch);
+      }
+    }
+  });
+
+  test('channelFromStatus converts a frequency-form channel with the map', () => {
+    expect(channelFromStatus('auto6c:243000000', 'us', 'us-cable')).toBe('27');
+    expect(channelFromStatus('auto6c:651000000', 'us', 'us-cable')).toBe('100');
+    expect(channelFromStatus('auto6c:217760800', 'us', 'us-hrc')).toBe('23');
+    expect(channelFromStatus('auto6t:213000000', 'us', 'us-bcast')).toBe('13');
+  });
+
+  test('formatChannelDisplay uses the map, and shows the raw string when it cannot place it', () => {
+    expect(formatChannelDisplay('auto6c:243000000', 'us', 'us-cable')).toBe('Channel 27');
+    expect(formatChannelDisplay('auto6c:651000000', 'us', 'us-cable')).toBe('Channel 100');
+    expect(formatChannelDisplay('auto6c:651000000', 'us', 'us-bcast')).toBe('auto6c:651000000');
+  });
+
+  test('streamFrequency uses the map for a plain RF channel', () => {
+    expect(streamFrequency('auto:27', 'us', 'us-cable')).toBe(243e6);
+    expect(streamFrequency('auto:27', 'us', 'us-bcast')).toBe(551e6);
+    expect(streamFrequency('auto6c:651000000', 'us', 'us-cable')).toBe('651000000');
+  });
+});

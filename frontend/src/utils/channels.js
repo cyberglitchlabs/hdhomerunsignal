@@ -35,8 +35,67 @@ export const DEFAULT_CHANNEL_MAP = {
   au: 'au-bcast'
 };
 
-// Convert frequency (in Hz) to broadcast channel number
-export function frequencyToChannel(freqHz, region = 'us') {
+// Channel plans for the cable, HRC and IRC maps, from libhdhomerun's
+// hdhomerun_channels.c. Each range is [first channel, last channel, frequency
+// of the first channel in Hz, spacing in Hz]. HRC and IRC channels sit at offset
+// frequencies, so a reported frequency is matched to within half a spacing.
+// Canadian maps use the US tables; EU and AU cable share one table.
+const CABLE_PLANS = {
+  'us-cable': [
+    [2, 4, 57000000, 6000000], [5, 6, 79000000, 6000000], [7, 13, 177000000, 6000000],
+    [14, 22, 123000000, 6000000], [23, 94, 219000000, 6000000], [95, 99, 93000000, 6000000],
+    [100, 158, 651000000, 6000000]
+  ],
+  'us-hrc': [
+    [2, 4, 55752700, 6000300], [5, 6, 79753900, 6000300], [7, 13, 175758700, 6000300],
+    [14, 22, 121756000, 6000300], [23, 94, 217760800, 6000300], [95, 99, 91754500, 6000300],
+    [100, 158, 649782400, 6000300]
+  ],
+  'us-irc': [
+    [2, 4, 57012500, 6000000], [5, 6, 81012500, 6000000], [7, 13, 177012500, 6000000],
+    [14, 22, 123012500, 6000000], [23, 41, 219012500, 6000000], [42, 42, 333025000, 6000000],
+    [43, 94, 339012500, 6000000], [95, 97, 93012500, 6000000], [98, 99, 111025000, 6000000],
+    [100, 158, 651012500, 6000000]
+  ],
+  'eu-cable': [[108, 862, 108000000, 1000000]]
+};
+
+// The plan for a cable, HRC or IRC map, or null for a broadcast map
+function cablePlan(channelMap) {
+  const key = (channelMap || '').replace(/^(ca|au)-/, (_, prefix) => (prefix === 'ca' ? 'us-' : 'eu-'));
+  return CABLE_PLANS[key] || null;
+}
+
+// The channel at a frequency in a cable plan, or null if none is within half a spacing
+function planFrequencyToChannel(plan, freqHz) {
+  let best = null;
+  let bestDiff = Infinity;
+  for (const [first, last, base, spacing] of plan) {
+    const index = Math.round((freqHz - base) / spacing);
+    if (index < 0 || first + index > last) continue;
+    const diff = Math.abs(freqHz - (base + index * spacing));
+    if (diff <= spacing / 2 && diff < bestDiff) {
+      best = first + index;
+      bestDiff = diff;
+    }
+  }
+  return best;
+}
+
+// The frequency of a channel in a cable plan, or null if the plan has no such channel
+function planChannelToFrequency(plan, channel) {
+  for (const [first, last, base, spacing] of plan) {
+    if (channel >= first && channel <= last) return base + (channel - first) * spacing;
+  }
+  return null;
+}
+
+// Convert frequency (in Hz) to a channel number: with a cable, HRC or IRC map
+// by that map's plan, otherwise by the region's broadcast plan
+export function frequencyToChannel(freqHz, region = 'us', channelMap = '') {
+  const plan = cablePlan(channelMap);
+  if (plan) return planFrequencyToChannel(plan, freqHz);
+
   const freqMhz = freqHz / 1000000;
 
   if (region === 'eu') {
@@ -116,8 +175,15 @@ export function frequencyToChannel(freqHz, region = 'us') {
   return null; // Unknown frequency range
 }
 
-// Convert broadcast channel number to center frequency (in Hz)
-export function channelToFrequency(channel, region = 'us') {
+// Convert a channel number to its frequency (in Hz), by the cable, HRC or IRC
+// map's plan or the region's broadcast plan
+export function channelToFrequency(channel, region = 'us', channelMap = '') {
+  const plan = cablePlan(channelMap);
+  if (plan) {
+    const number = parseInt(channel, 10);
+    return isNaN(number) ? null : planChannelToFrequency(plan, number);
+  }
+
   if (region === 'au' && String(channel).toUpperCase() === '9A') {
     return 205.5 * 1000000;
   }
@@ -185,10 +251,10 @@ export function getChannelRange(region, channelMap = '') {
 // The value the CH field should show for a tuner's reported channel, or null
 // when it should be left alone. 'none' (tuner stopped) is handled by the caller.
 // Formats: "auto6t:605028615" (frequency in Hz), "auto:4" and "13".
-export function channelFromStatus(statusChannel, region) {
+export function channelFromStatus(statusChannel, region, channelMap = '') {
   const freqMatch = statusChannel.match(/:(\d{8,})/);
   if (freqMatch) {
-    const channel = frequencyToChannel(parseInt(freqMatch[1]), region);
+    const channel = frequencyToChannel(parseInt(freqMatch[1]), region, channelMap);
     return channel ? channel.toString() : null;
   }
   const channelMatch = statusChannel.match(/(?:auto:)?(\d+)/);
@@ -196,20 +262,20 @@ export function channelFromStatus(statusChannel, region) {
 }
 
 // How a tuner's reported channel reads on screen, e.g. "Channel 27". A
-// frequency-form channel is converted using the region; one the region cannot
-// place is shown as reported.
-export function formatChannelDisplay(statusChannel, region) {
+// frequency-form channel is converted using the region and channel map; one they
+// cannot place is shown as reported.
+export function formatChannelDisplay(statusChannel, region, channelMap = '') {
   if (!statusChannel || statusChannel === 'none') return 'Not tuned';
-  const channel = channelFromStatus(statusChannel, region);
+  const channel = channelFromStatus(statusChannel, region, channelMap);
   return channel ? `Channel ${channel}` : statusChannel;
 }
 
 // Frequency (Hz) for a stream URL from a status channel such as "auto:27".
 // A 9+ digit value is already a frequency; anything else is an RF channel.
-export function streamFrequency(statusChannel, region) {
+export function streamFrequency(statusChannel, region, channelMap = '') {
   const rawChannel = statusChannel?.split(':')[1];
   if (!rawChannel) return null;
-  return (rawChannel.length >= 9 ? rawChannel : channelToFrequency(rawChannel, region)) || null;
+  return (rawChannel.length >= 9 ? rawChannel : channelToFrequency(rawChannel, region, channelMap)) || null;
 }
 
 // The channel one step up (+1) or down (-1) from the CH field, clamped to the

@@ -79,3 +79,63 @@ describe('switching tuner or device', () => {
     expect(axios.get).not.toHaveBeenCalled();
   });
 });
+
+describe('the CH field follows the region and channel map', () => {
+  const base = { selectedDevice: 'A', selectedTuner: 0, region: 'us', channelMap: 'us-bcast' };
+  const onVhfLow = { channel: 'auto6t:57000000', lock: true }; // US channel 2; EU has no plan below 174 MHz
+
+  async function tunedTo(status, props = base) {
+    const hook = renderHook((p) => useBoth(p), { initialProps: props });
+    act(() => hook.result.current.handleTunerStatus(status));
+    await waitFor(() => expect(axios.get).toHaveBeenCalled());
+    return hook;
+  }
+
+  test('a frequency-form channel shows the number its region gives it', async () => {
+    const { result } = await tunedTo(onVhfLow);
+    expect(result.current.directChannel).toBe('2');
+  });
+
+  test('a region that cannot place the frequency clears the field instead of keeping the old number', async () => {
+    const { result, rerender } = await tunedTo(onVhfLow);
+    rerender({ ...base, region: 'eu', channelMap: 'eu-bcast' });
+    expect(result.current.directChannel).toBe('');
+  });
+
+  test('stepping after that starts from the bottom of the range, not the old number', async () => {
+    const { result, rerender } = await tunedTo(onVhfLow);
+    rerender({ ...base, region: 'eu', channelMap: 'eu-bcast' });
+    await act(() => result.current.incrementChannel());
+    expect(axios.post).toHaveBeenLastCalledWith(
+      '/api/v1/devices/A/tuner/0/channel',
+      { channel: '6' } // EU range starts at 5
+    );
+  });
+
+  test('a normal status update with an unplaceable frequency also clears the field', async () => {
+    const { result } = await tunedTo({ channel: 'auto6t:100000000', lock: true });
+    expect(result.current.directChannel).toBe('');
+  });
+
+  test('a cable frequency shows its cable channel under a cable map', async () => {
+    const { result } = await tunedTo(
+      { channel: 'auto6c:651000000', lock: true },
+      { ...base, channelMap: 'us-cable' }
+    );
+    expect(result.current.directChannel).toBe('100');
+  });
+
+  test('switching to a cable map recomputes the field for the same frequency', async () => {
+    const { result, rerender } = await tunedTo({ channel: 'auto6c:243000000', lock: true });
+    expect(result.current.directChannel).toBe(''); // broadcast has no channel at 243 MHz
+    rerender({ ...base, channelMap: 'us-cable' });
+    expect(result.current.directChannel).toBe('27');
+  });
+
+  test('a region change does not overwrite what the user typed for a plain channel', async () => {
+    const { result, rerender } = await tunedTo({ channel: 'auto:27', lock: true });
+    act(() => result.current.setDirectChannel('31'));
+    rerender({ ...base, region: 'ca', channelMap: 'ca-bcast' });
+    expect(result.current.directChannel).toBe('31');
+  });
+});
