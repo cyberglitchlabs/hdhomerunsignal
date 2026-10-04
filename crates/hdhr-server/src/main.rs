@@ -9,7 +9,7 @@ use hdhr_server::app::router;
 use hdhr_server::config::Config;
 use hdhr_server::state::AppState;
 use tokio::net::TcpListener;
-use tokio::signal::unix::{SignalKind, signal};
+use tokio::signal::unix::{Signal, SignalKind, signal};
 
 /// How long open connections get to finish once a shutdown signal arrives.
 const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
@@ -46,6 +46,21 @@ async fn main() -> ExitCode {
         .without_time()
         .init();
 
+    // Installed before the server can report it is ready: a signal that arrives
+    // first would get the default action and kill the process without a clean
+    // shutdown. The streams remember signals from here on, so one that arrives
+    // before the server starts waiting on them is still acted on.
+    let signals = match (
+        signal(SignalKind::terminate()),
+        signal(SignalKind::interrupt()),
+    ) {
+        (Ok(term), Ok(int)) => Some((term, int)),
+        _ => {
+            tracing::error!("Could not install signal handlers");
+            None
+        }
+    };
+
     let config = match Config::from_env() {
         Ok(config) => config,
         Err(error) => {
@@ -78,7 +93,7 @@ async fn main() -> ExitCode {
         }
     }
 
-    let served = axum::serve(listener, app).with_graceful_shutdown(shutdown_signal(state));
+    let served = axum::serve(listener, app).with_graceful_shutdown(shutdown_signal(state, signals));
     match served.await {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
@@ -92,12 +107,8 @@ async fn main() -> ExitCode {
 /// otherwise stay open for ever), then starts a timer that ends the process if
 /// connections stay open past [`SHUTDOWN_TIMEOUT`]. In a container the server is
 /// PID 1, where a signal without a handler is ignored.
-async fn shutdown_signal(state: Arc<AppState>) {
-    let (Ok(mut term), Ok(mut int)) = (
-        signal(SignalKind::terminate()),
-        signal(SignalKind::interrupt()),
-    ) else {
-        tracing::error!("Could not install signal handlers");
+async fn shutdown_signal(state: Arc<AppState>, signals: Option<(Signal, Signal)>) {
+    let Some((mut term, mut int)) = signals else {
         return std::future::pending().await;
     };
     let name = tokio::select! {
