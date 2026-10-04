@@ -264,6 +264,7 @@ Select your region (United States, Canada, United Kingdom/EU or Australia) to co
 - **HDHomeRun Integration**: Uses `hdhomerun_config` command-line tool
 
 ### Container
+- Published for `linux/amd64` and `linux/arm64`. The arm64 image runs natively on Apple Silicon Macs (Docker Desktop) and on 64-bit Raspberry Pi OS (Pi 3, 4 and 5). Docker on a Mac has no host networking, so list your tuners in `HDHOMERUN_DEVICES` there. 32-bit Raspberry Pi OS is not supported.
 - Multi-stage build on digest-pinned base images: the Rust server and the built frontend in a Debian slim runtime image, `linux/amd64` and `linux/arm64`
 - Runs as a non-root user, and works with a read-only root filesystem and all capabilities dropped
 - `hdhomerun_config` is installed from the distribution's package repository
@@ -323,8 +324,9 @@ implements the same HTTP contract; the command must print `running on port <n>`
 once it is listening.
 
 If you change the API, regenerate the committed description with
-`UPDATE_OPENAPI=1 cargo test -p hdhr-server --test openapi`. A test fails when
-`api/openapi.json` is out of date.
+`UPDATE_OPENAPI=1 cargo test -p hdhr-server --test openapi`, then the frontend's
+TypeScript types with `npm run api:types` in `/frontend` (they are generated into
+`frontend/src/api/schema.d.ts`). CI fails when either is out of date.
 
 Pull requests are checked by CI: Rust format, clippy and tests, `cargo-deny`, end-to-end tests, frontend tests, `npm audit`, Dockerfile and workflow linting, secret scanning, dependency review, CodeQL, a Trivy scan of the built image, Helm chart validation, and a smoke test of the image under a read-only filesystem with all capabilities dropped. Pushes to `main` build, scan, publish and sign the image.
 
