@@ -11,7 +11,7 @@ import TunerMeters from './signal/TunerMeters';
 import TunerSettings from './signal/TunerSettings';
 import { useChannelControl } from '../hooks/useChannelControl';
 import { useDeviceChannelMaps } from '../hooks/useDeviceChannelMaps';
-import { useDevices } from '../hooks/useDevices';
+import { deviceInUse, useDevices } from '../hooks/useDevices';
 import { useInstallPrompt } from '../hooks/useInstallPrompt';
 import { useRegion } from '../hooks/useRegion';
 import { useSelectedTuner } from '../hooks/useSelectedTuner';
@@ -28,22 +28,25 @@ function SignalMeter() {
   } = useDevices();
   // Already valid for the device, so no stream or request uses a tuner it lacks
   const [selectedTuner, setSelectedTuner] = useSelectedTuner(deviceInfo);
+  // The selected device once its info is known. Streams, requests and the live
+  // state use this, so nothing acts on a device before its tuners are known.
+  const activeDevice = deviceInUse(selectedDevice, deviceInfo);
   const [antennaMode, setAntennaMode] = useState(false);
   const [allTunersData, setAllTunersData] = useState([]);
   const [contextMenu, setContextMenu] = useState(null); // { mouseX, mouseY, program }
   const { showInstallButton, install } = useInstallPrompt();
 
-  const { tunerStatus, plpInfo, l1Info, isAtsc3Channel, handleTunerStatus, clearAtsc3Info } = useTunerState(`${selectedDevice}/${selectedTuner}`);
+  const { tunerStatus, plpInfo, l1Info, isAtsc3Channel, handleTunerStatus, clearAtsc3Info } = useTunerState(`${activeDevice}/${selectedTuner}`);
   // Rolling signal/SNR history for the chart. Restarts with the channel (same key
   // as the session start/peak markers) and only records readings with a lock.
   const signalHistory = useSignalHistory(tunerStatus, {
-    resetKey: statsKey(selectedDevice, selectedTuner, tunerStatus?.channel),
+    resetKey: statsKey(activeDevice, selectedTuner, tunerStatus?.channel),
     requireLock: true
   });
-  const signalStats = useSignalStats(tunerStatus, selectedDevice, selectedTuner);
+  const signalStats = useSignalStats(tunerStatus, activeDevice, selectedTuner);
 
   useEventStream({
-    selectedDevice,
+    selectedDevice: activeDevice,
     selectedTuner,
     antennaMode,
     deviceInfo,
@@ -74,7 +77,7 @@ function SignalMeter() {
     incrementChannel,
     decrementChannel,
     clearTuner
-  } = useChannelControl({ selectedDevice, selectedTuner, region, channelMap: activeChannelMap, deviceChannelMap, tunerStatus, clearAtsc3Info });
+  } = useChannelControl({ selectedDevice: activeDevice, selectedTuner, region, channelMap: activeChannelMap, deviceChannelMap, tunerStatus, clearAtsc3Info });
 
   const showTunerPanels = !antennaMode && selectedDevice;
 
@@ -122,7 +125,7 @@ function SignalMeter() {
           <PanelCard>
             <ChannelControls
               tunerStatus={tunerStatus}
-              selectedDevice={selectedDevice}
+              selectedDevice={activeDevice}
               directChannel={directChannel}
               onDirectChannelChange={setDirectChannel}
               maxChannel={getChannelRange(region, activeChannelMap).max}
@@ -157,7 +160,7 @@ function SignalMeter() {
             tunerStatus={tunerStatus}
             region={region}
             channelMap={activeChannelMap}
-            selectedDevice={selectedDevice}
+            selectedDevice={activeDevice}
             onContextMenu={setContextMenu}
           />
         )}
@@ -169,7 +172,7 @@ function SignalMeter() {
         tunerStatus={tunerStatus}
         region={region}
         channelMap={activeChannelMap}
-        selectedDevice={selectedDevice}
+        selectedDevice={activeDevice}
       />
     </Box>
   );
