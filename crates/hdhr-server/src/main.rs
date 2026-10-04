@@ -23,6 +23,22 @@ async fn main() -> ExitCode {
         return ExitCode::SUCCESS;
     }
 
+    // `--healthcheck` asks the server already running on PORT whether it is well, for
+    // the container's HEALTHCHECK, and exits 0 (well) or 1.
+    if std::env::args().nth(1).as_deref() == Some("--healthcheck") {
+        let port = std::env::var("PORT")
+            .ok()
+            .and_then(|p| p.parse().ok())
+            .unwrap_or(3000);
+        return match hdhr_server::healthcheck::check(port, Duration::from_secs(4)).await {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(error) => {
+                eprintln!("unhealthy: {error}");
+                ExitCode::FAILURE
+            }
+        };
+    }
+
     // Logs go to stdout without colour, one line each, like the Node server's.
     tracing_subscriber::fmt()
         .with_ansi(false)

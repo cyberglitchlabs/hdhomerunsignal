@@ -10,3 +10,9 @@ publish = false
 
 [workspace.lints.clippy]
 all = { level = "deny", priority = -1 }
+
+[profile.release]
+# A smaller binary: the image only needs to run it.
+strip = true
+lto = "thin"
+codegen-units = 1
