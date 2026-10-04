@@ -5,6 +5,7 @@ pub mod app;
 pub mod config;
 mod discovery;
 mod error;
+pub mod healthcheck;
 pub mod hub;
 pub mod limits;
 pub mod openapi;
