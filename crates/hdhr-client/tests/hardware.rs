@@ -4,7 +4,8 @@
 //!
 //! These only read, except `tune_and_clear`, which also needs HDHR_TEST_TUNE set
 //! to a channel (e.g. `auto:34`) and refuses to touch tuner 0 unless it is idle.
-//! `scan` needs HDHR_TEST_SCAN=1 and takes about two minutes.
+//! `scan` needs HDHR_TEST_SCAN=1 and takes about two minutes. It uses tuner 0
+//! unless HDHR_TEST_SCAN_TUNER says otherwise.
 
 use std::sync::Arc;
 
@@ -109,7 +110,12 @@ async fn scan() {
     let (Some(host), Ok(_)) = (device(), std::env::var("HDHR_TEST_SCAN")) else {
         return;
     };
-    let channels = hdhr().scan(&host, 0, "us-bcast").await.expect("scan");
+    // The scan needs a tuner nobody else is using: HDHR_TEST_SCAN_TUNER, default 0.
+    let tuner = std::env::var("HDHR_TEST_SCAN_TUNER")
+        .ok()
+        .and_then(|t| t.parse().ok())
+        .unwrap_or(0);
+    let channels = hdhr().scan(&host, tuner, "us-bcast").await.expect("scan");
     println!("{} channels locked", channels.len());
     assert!(channels.iter().all(|c| c.modulation != "none"));
 }
