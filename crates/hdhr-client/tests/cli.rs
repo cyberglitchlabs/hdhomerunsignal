@@ -2,8 +2,10 @@
 //! arguments it received, one per line, and answers by variable name.
 
 use std::fs;
+use std::io::ErrorKind;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
 
@@ -28,6 +30,7 @@ impl Fake {
         fs::write(dir.join("scan.txt"), SCAN).unwrap();
         let script = format!(
             r#"#!/bin/sh
+[ "$1" = "--probe" ] && exit 0
 for a in "$@"; do printf '%s\n' "$a"; done >> '{dir}/args.log'
 echo '--' >> '{dir}/args.log'
 case "$*" in
@@ -47,6 +50,7 @@ esac
         let program = dir.join("hdhomerun_config");
         fs::write(&program, script).unwrap();
         fs::set_permissions(&program, fs::Permissions::from_mode(0o755)).unwrap();
+        wait_until_executable(&program);
         let backend = CliBackend::new(CliConfig {
             program: program.into(),
             call_timeout,
@@ -63,6 +67,27 @@ esac
             .map(|call| call.lines().map(str::to_owned).collect())
             .collect()
     }
+}
+
+/// Running a file fails with "Text file busy" while any process still has it open
+/// for writing, and these tests run on parallel threads of one process: a fork on
+/// another thread can briefly inherit the write descriptor of the script just
+/// written. Run it once, retrying while it is busy. After one run succeeds nothing
+/// holds it open for writing (the descriptor is closed, so no later fork can
+/// inherit it), and the calls under test cannot hit the error.
+fn wait_until_executable(program: &Path) {
+    for _ in 0..500 {
+        match Command::new(program).arg("--probe").status() {
+            Err(error) if error.kind() == ErrorKind::ExecutableFileBusy => {
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            result => {
+                assert!(result.unwrap().success());
+                return;
+            }
+        }
+    }
+    panic!("{} is still busy after 5 seconds", program.display());
 }
 
 impl Drop for Fake {
